@@ -42,7 +42,6 @@ class Yolov3Model : public BaseModelImpl
     // 工具函数
     float sigmoid(float x) const;
     float deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) const;
-    float getValueAt(void* input, bool is_quantized, int index, int32_t zp, float scale) const;
     int processYoloLayer(void* input, bool is_quantized, const YoloLayer& layer, std::vector<float>& boxes,
                          std::vector<float>& objProbs, std::vector<int>& classId, float threshold, int32_t zp = 0,
                          float scale = 0) const;
