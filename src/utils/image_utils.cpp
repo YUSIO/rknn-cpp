@@ -36,8 +36,8 @@ int getImageSize(const image_buffer_t& image)
     }
 }
 
-// 创建图像缓冲区
-image_buffer_t createImageBuffer(int width, int height, ImageFormat format)
+// 创建图像缓冲区，可复用外部缓存
+image_buffer_t createImageBuffer(int width, int height, ImageFormat format, unsigned char* external_buffer)
 {
     image_buffer_t image{};
     image.width = width;
@@ -46,20 +46,32 @@ image_buffer_t createImageBuffer(int width, int height, ImageFormat format)
     image.height_stride = height;
     image.format = format;
     image.size = getImageSize(image);
-    image.fd = -1;
 
     if (image.size > 0)
     {
-        image.virt_addr = static_cast<unsigned char*>(malloc(image.size));
-        if (image.virt_addr == nullptr)
+        if (external_buffer != nullptr)
         {
-            std::cerr << "Failed to allocate " << image.size << " bytes for image buffer" << std::endl;
-            image.size = 0;
+            image.virt_addr = external_buffer;
+            image.fd = -2;  // 标记外部分配，不需要free
         }
         else
         {
-            memset(image.virt_addr, 0, image.size);
+            image.virt_addr = static_cast<unsigned char*>(malloc(image.size));
+            if (image.virt_addr == nullptr)
+            {
+                std::cerr << "Failed to allocate " << image.size << " bytes for image buffer" << std::endl;
+                image.size = 0;
+            }
+            else
+            {
+                memset(image.virt_addr, 0, image.size);
+                image.fd = -1;
+            }
         }
+    }
+    else
+    {
+        image.fd = -1;
     }
 
     return image;
@@ -68,11 +80,11 @@ image_buffer_t createImageBuffer(int width, int height, ImageFormat format)
 // 释放图像缓冲区内存
 void freeImage(image_buffer_t& image)
 {
-    if (image.virt_addr != nullptr)
+    if (image.virt_addr != nullptr && image.fd != -2)
     {
         free(image.virt_addr);
-        image.virt_addr = nullptr;
     }
+    image.virt_addr = nullptr;
     image.size = 0;
     image.width = 0;
     image.height = 0;

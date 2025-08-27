@@ -65,6 +65,9 @@ class BaseModelImpl : public IModel
 
     // 输出缓冲区
     std::vector<rknn_output> outputs_;
+
+    // 预处理缓冲区
+    image_buffer_t preprocess_buffer_;
 };
 
 }  // namespace rknn_cpp
