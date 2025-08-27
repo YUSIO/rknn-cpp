@@ -222,19 +222,6 @@ float Yolov3Model::deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) cons
 {
     return scale * ((float)qnt - (float)zp);
 }
-float Yolov3Model::getValueAt(void* input, bool is_quantized, int index, int32_t zp, float scale) const
-{
-    if (is_quantized)
-    {
-        int8_t* i8_input = static_cast<int8_t*>(input);
-        return deqnt_affine_to_f32(i8_input[index], zp, scale);
-    }
-    else
-    {
-        float* f32_input = static_cast<float*>(input);
-        return f32_input[index];
-    }
-}
 
 int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLayer& layer, std::vector<float>& boxes,
                                   std::vector<float>& objProbs, std::vector<int>& classId, float threshold, int32_t zp,
@@ -245,69 +232,142 @@ int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLaye
     int validCount = 0;
     int grid_len = layer.grid_h * layer.grid_w;
 
-    // 每个grid cell有3个anchor
-    for (int a = 0; a < 3; a++)
+    if (is_quantized)
     {
-        for (int i = 0; i < layer.grid_h; i++)
+        int8_t* data = static_cast<int8_t*>(input);
+        for (int a = 0; a < 3; a++)
         {
-            for (int j = 0; j < layer.grid_w; j++)
+            for (int i = 0; i < layer.grid_h; i++)
             {
-                // 获取objectness confidence
-                int conf_idx = (PROP_BOX_SIZE * a + 4) * grid_len + i * layer.grid_w + j;
-                float box_confidence = sigmoid(getValueAt(input, is_quantized, conf_idx, zp, scale));
-
-                if (box_confidence >= threshold)
+                for (int j = 0; j < layer.grid_w; j++)
                 {
-                    int offset = (PROP_BOX_SIZE * a) * grid_len + i * layer.grid_w + j;
+                    int conf_idx = (PROP_BOX_SIZE * a + 4) * grid_len + i * layer.grid_w + j;
+                    float conf_input = deqnt_affine_to_f32(data[conf_idx], zp, scale);
+                    float box_confidence = sigmoid(conf_input);
 
-                    // 获取边界框坐标
-                    float tx = getValueAt(input, is_quantized, offset, zp, scale);
-                    float ty = getValueAt(input, is_quantized, offset + grid_len, zp, scale);
-                    float tw = getValueAt(input, is_quantized, offset + 2 * grid_len, zp, scale);
-                    float th = getValueAt(input, is_quantized, offset + 3 * grid_len, zp, scale);
-
-                    // YOLOv3坐标框解码
-                    float box_x = sigmoid(tx) * 2.0f - 0.5f;
-                    float box_y = sigmoid(ty) * 2.0f - 0.5f;
-                    float box_w = powf(sigmoid(tw) * 2.0f, 2);
-                    float box_h = powf(sigmoid(th) * 2.0f, 2);
-
-                    // 转换到原图坐标
-                    box_x = (box_x + j) * static_cast<float>(layer.stride);
-                    box_y = (box_y + i) * static_cast<float>(layer.stride);
-                    box_w = box_w * static_cast<float>(layer.anchors[a * 2]);
-                    box_h = box_h * static_cast<float>(layer.anchors[a * 2 + 1]);
-
-                    // 转换为左上角坐标
-                    box_x -= (box_w / 2.0f);
-                    box_y -= (box_h / 2.0f);
-
-                    // 寻找最大类别概率
-                    float maxClassProbs = sigmoid(getValueAt(input, is_quantized, offset + 5 * grid_len, zp, scale));
-                    int maxClassId = 0;
-
-                    for (int k = 1; k < OBJ_CLASS_NUM; ++k)
+                    if (box_confidence >= threshold)
                     {
-                        float prob = sigmoid(getValueAt(input, is_quantized, offset + (5 + k) * grid_len, zp, scale));
-                        if (prob > maxClassProbs)
+                        int offset = (PROP_BOX_SIZE * a) * grid_len + i * layer.grid_w + j;
+
+                        float tx = deqnt_affine_to_f32(data[offset], zp, scale);
+                        float ty = deqnt_affine_to_f32(data[offset + grid_len], zp, scale);
+                        float tw = deqnt_affine_to_f32(data[offset + 2 * grid_len], zp, scale);
+                        float th = deqnt_affine_to_f32(data[offset + 3 * grid_len], zp, scale);
+
+                        float sig_tx = sigmoid(tx);
+                        float sig_ty = sigmoid(ty);
+                        float sig_tw = sigmoid(tw);
+                        float sig_th = sigmoid(th);
+
+                        float box_x = sig_tx * 2.0f - 0.5f;
+                        float box_y = sig_ty * 2.0f - 0.5f;
+                        float box_w = powf(sig_tw * 2.0f, 2);
+                        float box_h = powf(sig_th * 2.0f, 2);
+
+                        box_x = (box_x + j) * static_cast<float>(layer.stride);
+                        box_y = (box_y + i) * static_cast<float>(layer.stride);
+                        box_w *= static_cast<float>(layer.anchors[a * 2]);
+                        box_h *= static_cast<float>(layer.anchors[a * 2 + 1]);
+
+                        box_x -= (box_w / 2.0f);
+                        box_y -= (box_h / 2.0f);
+
+                        float class_input = deqnt_affine_to_f32(data[offset + 5 * grid_len], zp, scale);
+                        float maxClassProbs = sigmoid(class_input);
+                        int maxClassId = 0;
+
+                        for (int k = 1; k < OBJ_CLASS_NUM; ++k)
                         {
-                            maxClassId = k;
-                            maxClassProbs = prob;
+                            float cls_input = deqnt_affine_to_f32(data[offset + (5 + k) * grid_len], zp, scale);
+                            float prob = sigmoid(cls_input);
+                            if (prob > maxClassProbs)
+                            {
+                                maxClassId = k;
+                                maxClassProbs = prob;
+                            }
+                        }
+
+                        float final_conf = maxClassProbs * box_confidence;
+                        if (final_conf > threshold)
+                        {
+                            objProbs.push_back(final_conf);
+                            classId.push_back(maxClassId);
+                            validCount++;
+
+                            boxes.push_back(box_x);
+                            boxes.push_back(box_y);
+                            boxes.push_back(box_w);
+                            boxes.push_back(box_h);
                         }
                     }
+                }
+            }
+        }
+    }
+    else
+    {
+        float* data = static_cast<float*>(input);
+        for (int a = 0; a < 3; a++)
+        {
+            for (int i = 0; i < layer.grid_h; i++)
+            {
+                for (int j = 0; j < layer.grid_w; j++)
+                {
+                    int conf_idx = (PROP_BOX_SIZE * a + 4) * grid_len + i * layer.grid_w + j;
+                    float box_confidence = sigmoid(data[conf_idx]);
 
-                    // 最终置信度计算
-                    float final_conf = maxClassProbs * box_confidence;
-                    if (final_conf > threshold)
+                    if (box_confidence >= threshold)
                     {
-                        objProbs.push_back(final_conf);
-                        classId.push_back(maxClassId);
-                        validCount++;
+                        int offset = (PROP_BOX_SIZE * a) * grid_len + i * layer.grid_w + j;
 
-                        boxes.push_back(box_x);
-                        boxes.push_back(box_y);
-                        boxes.push_back(box_w);
-                        boxes.push_back(box_h);
+                        float tx = data[offset];
+                        float ty = data[offset + grid_len];
+                        float tw = data[offset + 2 * grid_len];
+                        float th = data[offset + 3 * grid_len];
+
+                        float sig_tx = sigmoid(tx);
+                        float sig_ty = sigmoid(ty);
+                        float sig_tw = sigmoid(tw);
+                        float sig_th = sigmoid(th);
+
+                        float box_x = sig_tx * 2.0f - 0.5f;
+                        float box_y = sig_ty * 2.0f - 0.5f;
+                        float box_w = powf(sig_tw * 2.0f, 2);
+                        float box_h = powf(sig_th * 2.0f, 2);
+
+                        box_x = (box_x + j) * static_cast<float>(layer.stride);
+                        box_y = (box_y + i) * static_cast<float>(layer.stride);
+                        box_w *= static_cast<float>(layer.anchors[a * 2]);
+                        box_h *= static_cast<float>(layer.anchors[a * 2 + 1]);
+
+                        box_x -= (box_w / 2.0f);
+                        box_y -= (box_h / 2.0f);
+
+                        float maxClassProbs = sigmoid(data[offset + 5 * grid_len]);
+                        int maxClassId = 0;
+
+                        for (int k = 1; k < OBJ_CLASS_NUM; ++k)
+                        {
+                            float prob = sigmoid(data[offset + (5 + k) * grid_len]);
+                            if (prob > maxClassProbs)
+                            {
+                                maxClassId = k;
+                                maxClassProbs = prob;
+                            }
+                        }
+
+                        float final_conf = maxClassProbs * box_confidence;
+                        if (final_conf > threshold)
+                        {
+                            objProbs.push_back(final_conf);
+                            classId.push_back(maxClassId);
+                            validCount++;
+
+                            boxes.push_back(box_x);
+                            boxes.push_back(box_y);
+                            boxes.push_back(box_w);
+                            boxes.push_back(box_h);
+                        }
                     }
                 }
             }
@@ -322,6 +382,7 @@ int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLaye
 
     return validCount;
 }
+
 float Yolov3Model::calculateIoU(float xmin0, float ymin0, float xmax0, float ymax0, float xmin1, float ymin1,
                                 float xmax1, float ymax1) const
 {
