@@ -1,0 +1,29 @@
+# 基本使用 Google 代码风格
+BasedOnStyle: Google
+
+# 设置列宽限制
+ColumnLimit: 120
+
+# 取消 include 文件排序
+SortIncludes: false
+SortUsingDeclarations: false
+
+# 调整花括号换行风格
+BreakBeforeBraces: Allman
+
+
+# 缩进设置
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# 换行设置
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+
+# 命名约定匹配 Google 风格 (不需要修改)
+DerivePointerAlignment: false
+
+# 支持 C++11 特性
+Standard: Cpp11

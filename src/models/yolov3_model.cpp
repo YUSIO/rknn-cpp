@@ -1,0 +1,463 @@
+#include "rknn_cpp/models/yolov3_model.h"
+#include "rknn_cpp/utils/image_utils.h"
+#include "opencv2/opencv.hpp"
+#include <iostream>
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <cmath>
+#include <chrono>
+#include <set>
+#include <numeric>
+#include <iomanip>
+
+namespace rknn_cpp
+{
+static const int PROP_BOX_SIZE = 85;  // 4(bbox) + 1(conf) + 80(classes)
+static const int OBJ_CLASS_NUM = 80;  // COCO数据集类别数
+
+Yolov3Model::Yolov3Model() : class_names_loaded_(false) {}
+ModelTask Yolov3Model::getTaskType() const
+{
+    return ModelTask::OBJECT_DETECTION;
+}
+
+std::string rknn_cpp::Yolov3Model::getModelName() const
+{
+    return "Yolov3";
+}
+
+bool Yolov3Model::setupModel(const ModelConfig& config)
+{
+    std::cout << "Setting up Yolov3 model..." << std::endl;
+    const auto& input_attrs = getInputAttrs();
+    const auto& output_attrs = getOutputAttrs();
+
+    if (input_attrs.empty() || output_attrs.empty())
+    {
+        std::cerr << "Invalid model tensors" << std::endl;
+        return false;
+    }
+    // 加载类别文件
+    auto class_file_it = config.find("class_file");
+    if (class_file_it != config.end() && !class_file_it->second.empty())
+    {
+        if (!loadClassNames(class_file_it->second))
+        {
+            std::cout << "[WARN] Failed to load class names: " << class_file_it->second << std::endl;
+        }
+    }
+
+    if (class_names_loaded_)
+    {
+        std::cout << "[INFO] Class names loaded: " << class_names_.size() << " classes" << std::endl;
+    }
+    else
+    {
+        std::cout << "[INFO] Using default class names (no file provided)" << std::endl;
+    }
+
+    return true;
+}
+bool Yolov3Model::preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img)
+{
+    std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing" << std::endl;
+    if (!letterboxPreprocess(src_img, dst_img, 144))
+    {
+        std::cerr << "Failed to preprocess image" << std::endl;
+        return false;
+    }
+    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.width << " x " << dst_img.height << std::endl;
+
+    return true;
+}
+
+InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output_count)
+{
+    std::cout << "\n[POSTPROCESS] YOLOv3 detection analysis" << std::endl;
+
+    if (outputs == nullptr || output_count <= 0)
+    {
+        std::cerr << "Invalid outputs for postprocessing" << std::endl;
+        return createEmptyResult();
+    }
+
+    // YOLOv3的三个检测层配置
+    std::vector<YoloLayer> yolo_layers = {
+        {40, 40, 16, {10, 14, 23, 27, 37, 58}},      // 中目标检测层
+        {20, 20, 32, {81, 82, 135, 169, 344, 319}},  // 大目标检测层
+    };
+    const auto& output_attrs = getOutputAttrs();
+    std::vector<float> boxes;
+    std::vector<float> objProbs;
+    std::vector<int> classId;
+
+    float conf_threshold = 0.25f;  // 可以作为配置参数
+    int total_valid_boxes = 0;
+
+    // 处理每个输出层
+    for (int i = 0; i < output_count && i < static_cast<int>(yolo_layers.size()); ++i)
+    {
+        const auto& attr = output_attrs[i];
+        const auto& layer = yolo_layers[i];
+
+        std::cout << "[LAYER " << i << "] Processing output: " << layer.grid_h << " x " << layer.grid_w
+                  << " (stride=" << layer.stride << ")" << std::endl;
+
+        // 验证输出维度
+        if (attr.dims[2] != static_cast<uint32_t>(layer.grid_h) || attr.dims[3] != static_cast<uint32_t>(layer.grid_w))
+        {
+            std::cerr << "Warning: Output dimensions mismatch for layer " << i << ", expected " << layer.grid_h << "x"
+                      << layer.grid_w << ", got " << attr.dims[2] << "x" << attr.dims[3] << std::endl;
+        }
+
+        int valid_count = 0;
+
+        if (isQuantized())
+        {
+            std::cout << "[QUANT] zp=" << attr.zp << ", scale=" << std::fixed << std::setprecision(6) << attr.scale
+                      << std::endl;
+            std::cout << "[MODE] Processing quantized model" << std::endl;
+            // 处理量化模型
+            valid_count = processYoloLayer(outputs[i].buf, true, layer, boxes, objProbs, classId, conf_threshold,
+                                           attr.zp, attr.scale);
+        }
+        else
+        {
+            // 处理浮点模型
+            std::cout << "Process float model" << std::endl;
+            valid_count = processYoloLayer(outputs[i].buf, false, layer, boxes, objProbs, classId, conf_threshold);
+        }
+
+        total_valid_boxes += valid_count;
+    }
+
+    std::cout << "\n[NMS] Pre-filtering summary" << std::endl;
+    std::cout << "      Total detections: " << total_valid_boxes << std::endl;
+
+    // 应用NMS
+    std::vector<int> keep_indices = applyNMS(boxes, objProbs, classId, 0.45f);
+
+    // 构建最终的检测结果
+    DetectionResults detections;
+    detections.reserve(keep_indices.size());
+
+    for (int idx : keep_indices)
+    {
+        DetectionResult detection;
+        detection.class_id = classId[idx];
+        detection.class_name = getClassName(classId[idx]);
+        detection.confidence = objProbs[idx];
+        detection.x = boxes[idx * 4];
+        detection.y = boxes[idx * 4 + 1];
+        detection.width = boxes[idx * 4 + 2];
+        detection.height = boxes[idx * 4 + 3];
+
+        detections.push_back(detection);
+    }
+    std::cout << "[RESULT] Final detections: " << detections.size() << std::endl;
+
+    // 使用基类的便利方法创建结果
+    return createDetectionResult(detections);
+}
+
+bool Yolov3Model::loadClassNames(const std::string& file_path)
+{
+    std::cout << "Loading class names from: " << file_path << std::endl;
+
+    std::ifstream file(file_path);
+    if (!file.is_open())
+    {
+        std::cerr << "Failed to open class names file: " << file_path << std::endl;
+        return false;
+    }
+
+    class_names_.clear();
+    std::string line;
+    int line_number = 0;
+
+    while (std::getline(file, line))
+    {
+        // 去除行尾的换行符和空格
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+        if (line.empty())
+        {
+            // 空行使用默认类名
+            class_names_.push_back("class_" + std::to_string(line_number));
+        }
+        else
+        {
+            class_names_.push_back(line);
+        }
+
+        line_number++;
+    }
+
+    file.close();
+
+    if (class_names_.empty())
+    {
+        std::cerr << "No class names loaded from file" << std::endl;
+        return false;
+    }
+
+    class_names_loaded_ = true;
+    std::cout << "Loaded " << class_names_.size() << " class names" << std::endl;
+
+    // 打印前几个类名作为验证
+    for (size_t i = 0; i < std::min(size_t(5), class_names_.size()); ++i)
+    {
+        std::cout << "  " << i << ": " << class_names_[i] << std::endl;
+    }
+
+    return true;
+}
+float Yolov3Model::sigmoid(float x) const
+{
+    return 1.0f / (1.0f + expf(-x));
+}
+float Yolov3Model::deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) const
+{
+    return scale * ((float)qnt - (float)zp);
+}
+float Yolov3Model::getValueAt(void* input, bool is_quantized, int index, int32_t zp, float scale) const
+{
+    if (is_quantized)
+    {
+        int8_t* i8_input = static_cast<int8_t*>(input);
+        return deqnt_affine_to_f32(i8_input[index], zp, scale);
+    }
+    else
+    {
+        float* f32_input = static_cast<float*>(input);
+        return f32_input[index];
+    }
+}
+
+int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLayer& layer, std::vector<float>& boxes,
+                                  std::vector<float>& objProbs, std::vector<int>& classId, float threshold, int32_t zp,
+                                  float scale) const
+{
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    int validCount = 0;
+    int grid_len = layer.grid_h * layer.grid_w;
+
+    // 每个grid cell有3个anchor
+    for (int a = 0; a < 3; a++)
+    {
+        for (int i = 0; i < layer.grid_h; i++)
+        {
+            for (int j = 0; j < layer.grid_w; j++)
+            {
+                // 获取objectness confidence
+                int conf_idx = (PROP_BOX_SIZE * a + 4) * grid_len + i * layer.grid_w + j;
+                float box_confidence = sigmoid(getValueAt(input, is_quantized, conf_idx, zp, scale));
+
+                if (box_confidence >= threshold)
+                {
+                    int offset = (PROP_BOX_SIZE * a) * grid_len + i * layer.grid_w + j;
+
+                    // 获取边界框坐标
+                    float tx = getValueAt(input, is_quantized, offset, zp, scale);
+                    float ty = getValueAt(input, is_quantized, offset + grid_len, zp, scale);
+                    float tw = getValueAt(input, is_quantized, offset + 2 * grid_len, zp, scale);
+                    float th = getValueAt(input, is_quantized, offset + 3 * grid_len, zp, scale);
+
+                    // YOLOv3坐标框解码
+                    float box_x = sigmoid(tx) * 2.0f - 0.5f;
+                    float box_y = sigmoid(ty) * 2.0f - 0.5f;
+                    float box_w = powf(sigmoid(tw) * 2.0f, 2);
+                    float box_h = powf(sigmoid(th) * 2.0f, 2);
+
+                    // 转换到原图坐标
+                    box_x = (box_x + j) * static_cast<float>(layer.stride);
+                    box_y = (box_y + i) * static_cast<float>(layer.stride);
+                    box_w = box_w * static_cast<float>(layer.anchors[a * 2]);
+                    box_h = box_h * static_cast<float>(layer.anchors[a * 2 + 1]);
+
+                    // 转换为左上角坐标
+                    box_x -= (box_w / 2.0f);
+                    box_y -= (box_h / 2.0f);
+
+                    // 寻找最大类别概率
+                    float maxClassProbs = sigmoid(getValueAt(input, is_quantized, offset + 5 * grid_len, zp, scale));
+                    int maxClassId = 0;
+
+                    for (int k = 1; k < OBJ_CLASS_NUM; ++k)
+                    {
+                        float prob = sigmoid(getValueAt(input, is_quantized, offset + (5 + k) * grid_len, zp, scale));
+                        if (prob > maxClassProbs)
+                        {
+                            maxClassId = k;
+                            maxClassProbs = prob;
+                        }
+                    }
+
+                    // 最终置信度计算
+                    float final_conf = maxClassProbs * box_confidence;
+                    if (final_conf > threshold)
+                    {
+                        objProbs.push_back(final_conf);
+                        classId.push_back(maxClassId);
+                        validCount++;
+
+                        boxes.push_back(box_x);
+                        boxes.push_back(box_y);
+                        boxes.push_back(box_w);
+                        boxes.push_back(box_h);
+                    }
+                }
+            }
+        }
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+
+    std::cout << "[TIMING] Layer processed in " << duration.count() << " μs" << std::endl;
+    std::cout << "[RESULT] Found " << validCount << " valid detections" << std::endl;
+
+    return validCount;
+}
+float Yolov3Model::calculateIoU(float xmin0, float ymin0, float xmax0, float ymax0, float xmin1, float ymin1,
+                                float xmax1, float ymax1) const
+{
+    // 计算交集区域
+    float inter_xmin = std::max(xmin0, xmin1);
+    float inter_ymin = std::max(ymin0, ymin1);
+    float inter_xmax = std::min(xmax0, xmax1);
+    float inter_ymax = std::min(ymax0, ymax1);
+
+    // 检查是否有交集
+    if (inter_xmin >= inter_xmax || inter_ymin >= inter_ymax)
+    {
+        return 0.0f;
+    }
+
+    // 计算交集面积
+    float inter_area = (inter_xmax - inter_xmin) * (inter_ymax - inter_ymin);
+
+    // 计算并集面积
+    float area0 = (xmax0 - xmin0) * (ymax0 - ymin0);
+    float area1 = (xmax1 - xmin1) * (ymax1 - ymin1);
+    float union_area = area0 + area1 - inter_area;
+
+    // 避免除零
+    if (union_area <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    return inter_area / union_area;
+}
+
+int Yolov3Model::nmsForClass(const std::vector<float>& boxes, const std::vector<int>& classIds, std::vector<int>& order,
+                             int filterId, float threshold) const
+{
+    int validCount = static_cast<int>(order.size());
+
+    for (int i = 0; i < validCount; ++i)
+    {
+        int n = order[i];
+        // 跳过已被抑制的框或不是目标类别的框
+        if (n == -1 || classIds[n] != filterId)
+        {
+            continue;
+        }
+
+        // 获取当前框的坐标 (x, y, w, h)
+        float xmin0 = boxes[n * 4 + 0];
+        float ymin0 = boxes[n * 4 + 1];
+        float xmax0 = boxes[n * 4 + 0] + boxes[n * 4 + 2];  // x + w
+        float ymax0 = boxes[n * 4 + 1] + boxes[n * 4 + 3];  // y + h
+
+        // 与后续所有框比较
+        for (int j = i + 1; j < validCount; ++j)
+        {
+            int m = order[j];
+            // 跳过已被抑制的框或不是目标类别的框
+            if (m == -1 || classIds[m] != filterId)
+            {
+                continue;
+            }
+
+            // 获取比较框的坐标 (x, y, w, h)
+            float xmin1 = boxes[m * 4 + 0];
+            float ymin1 = boxes[m * 4 + 1];
+            float xmax1 = boxes[m * 4 + 0] + boxes[m * 4 + 2];  // x + w
+            float ymax1 = boxes[m * 4 + 1] + boxes[m * 4 + 3];  // y + h
+
+            // 计算IoU
+            float iou = calculateIoU(xmin0, ymin0, xmax0, ymax0, xmin1, ymin1, xmax1, ymax1);
+
+            // 如果IoU超过阈值，抑制置信度较低的框
+            if (iou > threshold)
+            {
+                order[j] = -1;  // 标记为被抑制
+            }
+        }
+    }
+
+    return 0;
+}
+
+std::vector<int> Yolov3Model::applyNMS(const std::vector<float>& boxes, const std::vector<float>& scores,
+                                       const std::vector<int>& classIds, float nms_threshold) const
+{
+    int validCount = static_cast<int>(boxes.size() / 4);
+
+    if (validCount == 0)
+    {
+        return {};
+    }
+
+    std::cout << "\n[NMS] Applying Non-Maximum Suppression" << std::endl;
+    std::cout << "      Threshold: " << std::fixed << std::setprecision(3) << nms_threshold << std::endl;
+    std::cout << "      Input boxes: " << validCount << std::endl;
+
+    // 创建索引数组并按置信度排序
+    std::vector<int> order(validCount);
+    std::iota(order.begin(), order.end(), 0);  // 填充0,1,2...
+
+    // 按置信度降序排序
+    std::sort(order.begin(), order.end(), [&scores](int a, int b) { return scores[a] > scores[b]; });
+
+    // 获取所有唯一的类别ID
+    std::set<int> unique_classes(classIds.begin(), classIds.end());
+
+    // 对每个类别分别进行NMS
+    for (int class_id : unique_classes)
+    {
+        nmsForClass(boxes, classIds, order, class_id, nms_threshold);
+    }
+
+    // 收集未被抑制的检测框索引
+    std::vector<int> keep_indices;
+    for (int i = 0; i < validCount; ++i)
+    {
+        if (order[i] != -1)  // 未被抑制
+        {
+            keep_indices.push_back(order[i]);
+        }
+    }
+
+    std::cout << "NMS completed: " << keep_indices.size() << " boxes kept out of " << validCount << std::endl;
+
+    return keep_indices;
+}
+std::string Yolov3Model::getClassName(int class_id) const
+{
+    if (class_names_loaded_ && class_id >= 0 && class_id < static_cast<int>(class_names_.size()))
+    {
+        return class_names_[class_id];
+    }
+    else
+    {
+        // 如果没有加载类名文件或ID超出范围，返回默认名称
+        return "class_" + std::to_string(class_id);
+    }
+}
+}  // namespace rknn_cpp
