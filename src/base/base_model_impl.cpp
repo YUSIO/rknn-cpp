@@ -9,7 +9,13 @@ namespace rknn_cpp
 {
 
 BaseModelImpl::BaseModelImpl()
-    : rknn_ctx_(0), model_width_(0), model_height_(0), model_channels_(0), initialized_(false), is_quant_(false)
+    : rknn_ctx_(0),
+      model_width_(0),
+      model_height_(0),
+      model_channels_(0),
+      initialized_(false),
+      is_quant_(false),
+      preprocess_buffer_{}
 {
     memset(&io_num_, 0, sizeof(io_num_));
 }
@@ -121,7 +127,15 @@ bool BaseModelImpl::initialize(const ModelConfig& config)
     outputs_.resize(io_num_.n_output);
     memset(outputs_.data(), 0, outputs_.size() * sizeof(rknn_output));
 
-    // 8. 调用子类的模型设置
+    // 8. 分配预处理缓冲区（按模型输入尺寸）
+    preprocess_buffer_ = utils::createImageBuffer(model_width_, model_height_, ImageFormat::RGB888);
+    if (preprocess_buffer_.virt_addr == nullptr)
+    {
+        std::cerr << "Failed to allocate preprocess buffer" << std::endl;
+        return false;
+    }
+
+    // 9. 调用子类的模型设置
     if (!setupModel(config))
     {
         std::cerr << "setupModel failed!" << std::endl;
@@ -145,16 +159,20 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
         return createEmptyResult();
     }
 
-    // 1. 预处理图像
-    image_buffer_t preprocessed_img{};
-    if (!preprocessImage(image, preprocessed_img))
+    // 1. 预处理图像到复用缓冲区
+    if (preprocess_buffer_.virt_addr)
+    {
+        memset(preprocess_buffer_.virt_addr, 0, preprocess_buffer_.size);
+    }
+
+    if (!preprocessImage(image, preprocess_buffer_))
     {
         std::cerr << "Image preprocessing failed!" << std::endl;
         return createEmptyResult();
     }
 
     // 2. 执行推理
-    if (!runRKNNInference(preprocessed_img))
+    if (!runRKNNInference(preprocess_buffer_))
     {
         std::cerr << "RKNN inference failed!" << std::endl;
         return createEmptyResult();
@@ -166,12 +184,7 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
     // 4. 释放输出资源
     rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
 
-    // 5. 释放预处理图像内存
-    if (preprocessed_img.virt_addr != nullptr)
-    {
-        free(preprocessed_img.virt_addr);
-    }
-
+    // 5. 返回推理结果（预处理缓冲区在成员中复用，不再释放）
     return result;
 }
 
@@ -189,6 +202,9 @@ void BaseModelImpl::release()
     }
 
     outputs_.clear();
+
+    // 释放预处理缓冲区
+    utils::freeImage(preprocess_buffer_);
 
     input_attrs_.clear();
     output_attrs_.clear();
@@ -411,7 +427,7 @@ InferenceResult BaseModelImpl::createEmptyResult() const
 
 image_buffer_t BaseModelImpl::createModelSizedBuffer() const
 {
-    return utils::createImageBuffer(model_width_, model_height_, ImageFormat::RGB888);
+    return preprocess_buffer_;
 }
 
 bool BaseModelImpl::standardPreprocess(const image_buffer_t& src_img, image_buffer_t& dst_img) const
@@ -425,7 +441,6 @@ bool BaseModelImpl::standardPreprocess(const image_buffer_t& src_img, image_buff
     // 使用标准缩放 (拉伸到目标尺寸，不保持长宽比)
     if (!utils::standardResize(src_img, dst_img, model_width_, model_height_))
     {
-        freeImageBuffer(dst_img);
         return false;
     }
 
@@ -444,7 +459,6 @@ bool BaseModelImpl::letterboxPreprocess(const image_buffer_t& src_img, image_buf
     // 使用letterbox (保持长宽比，填充背景色)
     if (!utils::letterboxResize(src_img, dst_img, model_width_, model_height_, bg_color))
     {
-        freeImageBuffer(dst_img);
         return false;
     }
 

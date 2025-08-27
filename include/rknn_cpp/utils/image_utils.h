@@ -117,7 +117,8 @@ bool normalizeImage(const image_buffer_t& image, float* normalized_data, const f
  * @param format 图像格式
  * @return 创建的图像缓冲区
  */
-image_buffer_t createImageBuffer(int width, int height, ImageFormat format);
+image_buffer_t createImageBuffer(int width, int height, ImageFormat format,
+                                unsigned char* external_buffer = nullptr);
 
 /**
  * @brief 复制图像缓冲区
