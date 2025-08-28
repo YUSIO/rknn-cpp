@@ -182,7 +182,7 @@ ClassificationResults ResNetModel::getTopK(const float* data, int size, int k)
     {
         ClassificationResult result;
         result.confidence = elements[i].first;
-        result.class_id = elements[i].second;
+        result.class_id = static_cast<uint8_t>(elements[i].second);
         result.class_name = getClassName(result.class_id);  // 使用实际类名
         results.push_back(result);
     }

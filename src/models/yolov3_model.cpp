@@ -159,13 +159,13 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     for (int idx : keep_indices)
     {
         DetectionResult detection;
-        detection.class_id = classId[idx];
+        detection.class_id = static_cast<uint16_t>(classId[idx]);
         detection.class_name = getClassName(classId[idx]);
         detection.confidence = objProbs[idx];
-        detection.x = boxes[idx * 4];
-        detection.y = boxes[idx * 4 + 1];
-        detection.width = boxes[idx * 4 + 2];
-        detection.height = boxes[idx * 4 + 3];
+        detection.x = static_cast<uint16_t>(boxes[idx * 4]);
+        detection.y = static_cast<uint16_t>(boxes[idx * 4 + 1]);
+        detection.width = static_cast<uint16_t>(boxes[idx * 4 + 2]);
+        detection.height = static_cast<uint16_t>(boxes[idx * 4 + 3]);
 
         detections.push_back(detection);
     }

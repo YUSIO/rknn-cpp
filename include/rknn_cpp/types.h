@@ -65,16 +65,16 @@ struct ResizeConfig : public PreprocessConfig
 // 检测结果
 struct DetectionResult
 {
-    float x, y, width, height;  // 边界框坐标和尺寸
-    float confidence;           // 置信度
-    int class_id;               // 类别ID
-    std::string class_name;     // 类别名称
+    uint16_t x, y, width, height;  // 边界框坐标和尺寸
+    float confidence;              // 置信度
+    uint16_t class_id;             // 类别ID
+    std::string class_name;        // 类别名称
 };
 
 // 分类结果
 struct ClassificationResult
 {
-    int class_id;            // 类别ID
+    uint8_t class_id;        // 类别ID
     std::string class_name;  // 类别名称
     float confidence;        // 置信度
 };

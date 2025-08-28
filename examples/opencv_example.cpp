@@ -53,6 +53,32 @@ int main()
                 std::cout << "        Class " << cls.class_id << " (" << cls.class_name << "): " << std::fixed
                           << std::setprecision(3) << cls.confidence << std::endl;
             }
+
+            // 在图像上绘制分类结果
+            cv::Mat result_image = image.clone();
+            if (!classifications.empty())
+            {
+                const auto& top_cls = classifications[0];
+                std::string text = top_cls.class_name + ": " + std::to_string(top_cls.confidence).substr(0, 5);
+
+                // 在图像顶部绘制文本
+                int baseline = 0;
+                cv::Size text_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 2, &baseline);
+                cv::Point text_org(10, text_size.height + 10);
+
+                // 绘制文本背景
+                cv::rectangle(result_image, cv::Point(text_org.x - 5, text_org.y - text_size.height - 5),
+                              cv::Point(text_org.x + text_size.width + 5, text_org.y + baseline + 5),
+                              cv::Scalar(0, 0, 0), -1);
+
+                // 绘制文本
+                cv::putText(result_image, text, text_org, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+            }
+
+            // 保存结果图像
+            std::string output_path = "../outputs/resnet_result.jpg";
+            cv::imwrite(output_path, result_image);
+            std::cout << "[INFO] Classification result saved to: " << output_path << std::endl;
         }
 
         resnet_model->release();
@@ -102,6 +128,53 @@ int main()
                           << static_cast<int>(det.y) << "," << static_cast<int>(det.width) << ","
                           << static_cast<int>(det.height) << ")" << std::endl;
             }
+
+            // 在图像上绘制检测结果
+            cv::Mat result_image = image.clone();
+
+            // 定义颜色表
+            std::vector<cv::Scalar> colors = {
+                cv::Scalar(255, 0, 0),    // 红色
+                cv::Scalar(0, 255, 0),    // 绿色
+                cv::Scalar(0, 0, 255),    // 蓝色
+                cv::Scalar(255, 255, 0),  // 青色
+                cv::Scalar(255, 0, 255),  // 品红色
+                cv::Scalar(0, 255, 255),  // 黄色
+                cv::Scalar(128, 0, 128),  // 紫色
+                cv::Scalar(255, 165, 0)   // 橙色
+            };
+
+            for (size_t i = 0; i < detections.size(); ++i)
+            {
+                const auto& det = detections[i];
+                cv::Scalar color = colors[i % colors.size()];
+
+                // 绘制检测框
+                cv::Point top_left(static_cast<int>(det.x), static_cast<int>(det.y));
+                cv::Point bottom_right(static_cast<int>(det.x + det.width), static_cast<int>(det.y + det.height));
+                cv::rectangle(result_image, top_left, bottom_right, color, 2);
+
+                // 准备标签文本
+                std::string label = det.class_name + ": " + std::to_string(det.confidence).substr(0, 5);
+
+                // 计算文本大小
+                int baseline = 0;
+                cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 1, &baseline);
+
+                // 绘制标签背景
+                cv::Point label_top_left(top_left.x, top_left.y - text_size.height - 5);
+                cv::Point label_bottom_right(top_left.x + text_size.width, top_left.y);
+                cv::rectangle(result_image, label_top_left, label_bottom_right, color, -1);
+
+                // 绘制标签文本
+                cv::putText(result_image, label, cv::Point(top_left.x, top_left.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                            cv::Scalar(255, 255, 255), 1);
+            }
+
+            // 保存结果图像
+            std::string output_path = "../outputs/yolov3_detection_result.jpg";
+            cv::imwrite(output_path, result_image);
+            std::cout << "[INFO] Detection result saved to: " << output_path << std::endl;
         }
 
         yolo_model->release();
