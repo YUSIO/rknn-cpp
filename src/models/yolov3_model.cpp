@@ -73,6 +73,19 @@ bool Yolov3Model::preprocessImage(const image_buffer_t& src_img, image_buffer_t&
     return true;
 }
 
+bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
+{
+    std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing (cv::Mat)" << std::endl;
+    if (!letterboxPreprocess(src_img, dst_img, 144))
+    {
+        std::cerr << "Failed to preprocess image" << std::endl;
+        return false;
+    }
+    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.cols << " x " << dst_img.rows << std::endl;
+
+    return true;
+}
+
 InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output_count)
 {
     std::cout << "\n[POSTPROCESS] YOLOv3 detection analysis" << std::endl;

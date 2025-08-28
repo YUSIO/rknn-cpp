@@ -3,6 +3,7 @@
 #include <any>
 #include "rknn_cpp/types.h"
 #include <unordered_map>
+#include <opencv2/opencv.hpp>
 namespace rknn_cpp
 {
 using ModelConfig = std::unordered_map<std::string, std::string>;
@@ -16,6 +17,7 @@ class IModel
     // 核心接口
     virtual bool initialize(const ModelConfig& config) = 0;
     virtual InferenceResult predict(const image_buffer_t& image) = 0;  // 返回统一结果
+    virtual InferenceResult predict(const cv::Mat& image) = 0;         // 新增cv::Mat重载
     virtual void release() = 0;
 
     // 信息获取接口

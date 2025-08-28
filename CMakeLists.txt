@@ -59,6 +59,15 @@ set_target_properties(yolotest PROPERTIES
     INSTALL_RPATH "$ORIGIN"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
+
+# 构建OpenCV示例
+add_executable(opencv_example examples/opencv_example.cpp)
+target_link_libraries(opencv_example rknn_cpp)
+set_target_properties(opencv_example PROPERTIES
+    INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+)
+
 # 显示配置信息
 message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "RKNN Library: ${RKNN_LIB}")

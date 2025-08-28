@@ -200,6 +200,50 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
     return result;
 }
 
+InferenceResult BaseModelImpl::predict(const cv::Mat& image)
+{
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    if (!initialized_)
+    {
+        std::cerr << "Model not initialized!" << std::endl;
+        return createEmptyResult();
+    }
+
+    // 1. 直接使用cv::Mat预处理 - 独立Pipeline
+    cv::Mat preprocessed_img;
+    if (!preprocessImage(image, preprocessed_img))
+    {
+        std::cerr << "Image preprocessing failed!" << std::endl;
+        return createEmptyResult();
+    }
+    std::chrono::steady_clock::time_point point1 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> preprocess_duration = point1 - start;
+    std::cout << "[INFO] Image preprocessing time: " << preprocess_duration.count() << " ms" << std::endl;
+
+    // 2. 直接使用cv::Mat推理 - 独立Pipeline
+    if (!runRKNNInference(preprocessed_img))
+    {
+        std::cerr << "RKNN inference failed!" << std::endl;
+        return createEmptyResult();
+    }
+    std::chrono::steady_clock::time_point point2 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> inference_duration = point2 - point1;
+    std::cout << "[INFO] RKNN inference time: " << inference_duration.count() << " ms" << std::endl;
+
+    // 3. 后处理（共享逻辑）
+    InferenceResult result = postprocessOutputs(outputs_.data(), outputs_.size());
+    std::chrono::steady_clock::time_point point3 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> postprocess_duration = point3 - point2;
+    std::cout << "[INFO] Postprocess time: " << postprocess_duration.count() << " ms" << std::endl;
+    std::cout << "[INFO] Total inference time: "
+              << (preprocess_duration + inference_duration + postprocess_duration).count() << " ms" << std::endl;
+
+    // 4. 释放输出资源
+    rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
+
+    return result;
+}
+
 void BaseModelImpl::release()
 {
     if (!initialized_)
@@ -289,6 +333,76 @@ bool BaseModelImpl::runRKNNInference(const image_buffer_t& input_img)
     inputs[0].index = 0;
     inputs[0].buf = input_img.virt_addr;
     inputs[0].size = input_img.size;
+    inputs[0].pass_through = 0;
+    inputs[0].type = RKNN_TENSOR_UINT8;
+    inputs[0].fmt = RKNN_TENSOR_NHWC;
+
+    int ret = rknn_inputs_set(rknn_ctx_, io_num_.n_input, inputs);
+    if (ret < 0)
+    {
+        std::cerr << "rknn_inputs_set failed! ret=" << ret << std::endl;
+        return false;
+    }
+
+    // 2. 执行推理
+    ret = rknn_run(rknn_ctx_, nullptr);
+    if (ret < 0)
+    {
+        std::cerr << "rknn_run failed! ret=" << ret << std::endl;
+        return false;
+    }
+
+    // 3. 获取输出 - 设置want_float以获取浮点数据
+    for (uint32_t i = 0; i < io_num_.n_output; i++)
+    {
+        outputs_[i].want_float = (!is_quant_);
+    }
+
+    ret = rknn_outputs_get(rknn_ctx_, io_num_.n_output, outputs_.data(), nullptr);
+    if (ret < 0)
+    {
+        std::cerr << "rknn_outputs_get failed! ret=" << ret << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool BaseModelImpl::runRKNNInference(const cv::Mat& input_img)
+{
+    // 确保图像格式正确 - RGB格式
+    cv::Mat rgb_img;
+    if (input_img.channels() == 3)
+    {
+        cv::cvtColor(input_img, rgb_img, cv::COLOR_BGR2RGB);
+    }
+    else if (input_img.channels() == 1)
+    {
+        cv::cvtColor(input_img, rgb_img, cv::COLOR_GRAY2RGB);
+    }
+    else if (input_img.channels() == 4)
+    {
+        cv::cvtColor(input_img, rgb_img, cv::COLOR_BGRA2RGB);
+    }
+    else
+    {
+        rgb_img = input_img;
+    }
+
+    // 验证图像尺寸
+    if (rgb_img.cols != model_width_ || rgb_img.rows != model_height_ || rgb_img.channels() != 3)
+    {
+        std::cerr << "Image dimension mismatch: expected " << model_width_ << "x" << model_height_ << "x3, got "
+                  << rgb_img.cols << "x" << rgb_img.rows << "x" << rgb_img.channels() << std::endl;
+        return false;
+    }
+
+    // 1. 设置输入 - 直接使用cv::Mat数据
+    rknn_input inputs[1];
+    memset(inputs, 0, sizeof(inputs));
+    inputs[0].index = 0;
+    inputs[0].buf = rgb_img.data;  // 直接使用Mat数据指针，零拷贝
+    inputs[0].size = rgb_img.total() * rgb_img.elemSize();
     inputs[0].pass_through = 0;
     inputs[0].type = RKNN_TENSOR_UINT8;
     inputs[0].fmt = RKNN_TENSOR_NHWC;
@@ -480,6 +594,41 @@ bool BaseModelImpl::letterboxPreprocess(const image_buffer_t& src_img, image_buf
 void BaseModelImpl::freeImageBuffer(image_buffer_t& image) const
 {
     utils::freeImage(image);
+}
+
+bool BaseModelImpl::standardPreprocess(const cv::Mat& src_img, cv::Mat& dst_img) const
+{
+    // 直接使用OpenCV进行标准缩放
+    cv::resize(src_img, dst_img, cv::Size(model_width_, model_height_));
+    return true;
+}
+
+bool BaseModelImpl::letterboxPreprocess(const cv::Mat& src_img, cv::Mat& dst_img, unsigned char bg_color) const
+{
+    // 计算缩放比例，保持长宽比
+    float scale_x = static_cast<float>(model_width_) / src_img.cols;
+    float scale_y = static_cast<float>(model_height_) / src_img.rows;
+    float scale = std::min(scale_x, scale_y);
+
+    int scaled_width = static_cast<int>(src_img.cols * scale);
+    int scaled_height = static_cast<int>(src_img.rows * scale);
+
+    // 计算居中位置
+    int x_pad = (model_width_ - scaled_width) / 2;
+    int y_pad = (model_height_ - scaled_height) / 2;
+
+    // 创建目标图像并填充背景色
+    dst_img = cv::Mat(model_height_, model_width_, CV_8UC3, cv::Scalar(bg_color, bg_color, bg_color));
+
+    // 缩放源图像
+    cv::Mat resized;
+    cv::resize(src_img, resized, cv::Size(scaled_width, scaled_height));
+
+    // 将缩放后的图像复制到目标图像的中心位置
+    cv::Rect roi(x_pad, y_pad, scaled_width, scaled_height);
+    resized.copyTo(dst_img(roi));
+
+    return true;
 }
 
 }  // namespace rknn_cpp

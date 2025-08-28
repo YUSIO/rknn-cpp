@@ -72,6 +72,21 @@ bool ResNetModel::preprocessImage(const image_buffer_t& src_img, image_buffer_t&
     return true;
 }
 
+bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
+{
+    std::cout << "\n[PREPROCESS] ResNet image preprocessing (cv::Mat)" << std::endl;
+
+    // 使用基类提供的标准预处理方法
+    if (!standardPreprocess(src_img, dst_img))
+    {
+        std::cerr << "Failed to preprocess image" << std::endl;
+        return false;
+    }
+
+    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.cols << " x " << dst_img.rows << std::endl;
+    return true;
+}
+
 InferenceResult ResNetModel::postprocessOutputs(rknn_output* outputs, int output_count)
 {
     std::cout << "\n[POSTPROCESS] ResNet classification analysis" << std::endl;

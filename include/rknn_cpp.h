@@ -19,13 +19,20 @@
  * auto model = std::make_unique<ResNetModel>();
  * model->initialize("resnet50.rknn");
  *
- * // 加载和预处理图像
+ * // 使用image_buffer_t
  * auto image = utils::readImage("image.jpg");
  * auto result = model->predict(image);
+ *
+ * // 或者直接使用cv::Mat
+ * cv::Mat mat = cv::imread("image.jpg");
+ * auto result2 = model->predict(mat);
  *
  * model->release();
  * ```
  */
+
+// OpenCV支持
+#include <opencv2/opencv.hpp>
 
 // 核心类型定义
 #include "rknn_cpp/types.h"
