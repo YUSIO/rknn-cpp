@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstring>
 #include <iomanip>
+#include <chrono>
 
 namespace rknn_cpp
 {
@@ -153,6 +154,7 @@ bool BaseModelImpl::initialize(const ModelConfig& config)
 
 InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
 {
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     if (!initialized_)
     {
         std::cerr << "Model not initialized!" << std::endl;
@@ -170,6 +172,9 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
         std::cerr << "Image preprocessing failed!" << std::endl;
         return createEmptyResult();
     }
+    std::chrono::steady_clock::time_point point1 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> preprocess_duration = point1 - start;
+    std::cout << "[INFO] Image preprocessing time: " << preprocess_duration.count() << " ms" << std::endl;
 
     // 2. 执行推理
     if (!runRKNNInference(preprocess_buffer_))
@@ -177,10 +182,17 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
         std::cerr << "RKNN inference failed!" << std::endl;
         return createEmptyResult();
     }
+    std::chrono::steady_clock::time_point point2 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> inference_duration = point2 - point1;
+    std::cout << "[INFO] RKNN inference time: " << inference_duration.count() << " ms" << std::endl;
 
     // 3. 后处理
     InferenceResult result = postprocessOutputs(outputs_.data(), outputs_.size());
-
+    std::chrono::steady_clock::time_point point3 = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> postprocess_duration = point3 - point2;
+    std::cout << "[INFO] Postprocess time: " << postprocess_duration.count() << " ms" << std::endl;
+    std::cout << "[INFO] Total inference time: "
+              << (preprocess_duration + inference_duration + postprocess_duration).count() << " ms" << std::endl;
     // 4. 释放输出资源
     rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
 
