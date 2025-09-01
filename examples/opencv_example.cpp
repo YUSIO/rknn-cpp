@@ -2,6 +2,9 @@
 #include <iostream>
 #include <memory>
 #include <iomanip>
+#include <filesystem>
+#include <vector>
+#include <string>
 
 int main()
 {
@@ -13,7 +16,7 @@ int main()
 
     // 示例1: 使用ResNet进行图像分类
     {
-        std::cout << "\n[EXAMPLE] ResNet Classification with cv::Mat" << std::endl;
+        std::cout << "\n[EXAMPLE] ResNet Classification with cv::Mat - Batch Processing" << std::endl;
         std::cout << std::string(50, '-') << std::endl;
 
         auto resnet_model = createResNetModel();
@@ -26,61 +29,125 @@ int main()
             return -1;
         }
 
-        // 直接使用cv::Mat加载图像
-        cv::Mat image = cv::imread("../inputs/resnet.JPEG");
-        if (image.empty())
+        // 获取所有JPEG图片文件
+        std::string image_dir = "../inputs/imagenet/ILSVRC2012_img_val_samples";
+        std::vector<std::string> image_files;
+
+        try
         {
-            std::cerr << "Failed to load image" << std::endl;
+            for (const auto& entry : std::filesystem::directory_iterator(image_dir))
+            {
+                if (entry.is_regular_file())
+                {
+                    std::string filename = entry.path().filename().string();
+                    std::string extension = entry.path().extension().string();
+                    if (extension == ".JPEG" || extension == ".jpeg" || extension == ".JPG" || extension == ".jpg")
+                    {
+                        image_files.push_back(entry.path().string());
+                    }
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error reading directory: " << e.what() << std::endl;
             resnet_model->release();
             return -1;
         }
 
-        std::cout << "[INFO] Loaded image: " << image.cols << "x" << image.rows << " channels=" << image.channels()
-                  << std::endl;
-
-        // 执行推理 - 直接使用cv::Mat接口
-        auto result = resnet_model->predict(image);
-
-        if (result.task_type == ModelTask::CLASSIFICATION)
+        if (image_files.empty())
         {
-            std::cout << "\n[RESULTS] Classification Output:" << std::endl;
-            std::cout << std::string(35, '-') << std::endl;
-
-            auto classifications = result.getClassifications();
-            for (size_t i = 0; i < std::min(size_t(5), classifications.size()); ++i)
-            {
-                const auto& cls = classifications[i];
-                std::cout << "        Class " << cls.class_id << " (" << cls.class_name << "): " << std::fixed
-                          << std::setprecision(3) << cls.confidence << std::endl;
-            }
-
-            // 在图像上绘制分类结果
-            cv::Mat result_image = image.clone();
-            if (!classifications.empty())
-            {
-                const auto& top_cls = classifications[0];
-                std::string text = top_cls.class_name + ": " + std::to_string(top_cls.confidence).substr(0, 5);
-
-                // 在图像顶部绘制文本
-                int baseline = 0;
-                cv::Size text_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 2, &baseline);
-                cv::Point text_org(10, text_size.height + 10);
-
-                // 绘制文本背景
-                cv::rectangle(result_image, cv::Point(text_org.x - 5, text_org.y - text_size.height - 5),
-                              cv::Point(text_org.x + text_size.width + 5, text_org.y + baseline + 5),
-                              cv::Scalar(0, 0, 0), -1);
-
-                // 绘制文本
-                cv::putText(result_image, text, text_org, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
-            }
-
-            // 保存结果图像
-            std::string output_path = "../outputs/resnet_result.jpg";
-            cv::imwrite(output_path, result_image);
-            std::cout << "[INFO] Classification result saved to: " << output_path << std::endl;
+            std::cerr << "No JPEG files found in " << image_dir << std::endl;
+            resnet_model->release();
+            return -1;
         }
 
+        std::cout << "[INFO] Found " << image_files.size() << " images to process" << std::endl;
+
+        // 处理每个图片
+        int processed_count = 0;
+        int success_count = 0;
+
+        for (const auto& image_path : image_files)
+        {
+            processed_count++;
+
+            // 提取文件名（不含路径和扩展名）
+            std::string filename = std::filesystem::path(image_path).stem().string();
+
+            std::cout << "\n[" << processed_count << "/" << image_files.size() << "] Processing: " << filename
+                      << std::endl;
+
+            // 加载图像
+            cv::Mat image = cv::imread(image_path);
+            if (image.empty())
+            {
+                std::cerr << "Failed to load image: " << image_path << std::endl;
+                continue;
+            }
+
+            std::cout << "[INFO] Image size: " << image.cols << "x" << image.rows << " channels=" << image.channels()
+                      << std::endl;
+
+            // 执行推理
+            auto result = resnet_model->predict(image);
+
+            if (result.task_type == ModelTask::CLASSIFICATION)
+            {
+                auto classifications = result.getClassifications();
+                if (!classifications.empty())
+                {
+                    std::cout << "[RESULT] Top predictions:" << std::endl;
+                    for (size_t i = 0; i < std::min(size_t(3), classifications.size()); ++i)
+                    {
+                        const auto& cls = classifications[i];
+                        std::cout << "        " << (i + 1) << ". " << cls.class_name << " (" << std::fixed
+                                  << std::setprecision(3) << cls.confidence << ")" << std::endl;
+                    }
+
+                    // 在图像上绘制分类结果
+                    cv::Mat result_image = image.clone();
+                    const auto& top_cls = classifications[0];
+                    std::string text = top_cls.class_name + ": " + std::to_string(top_cls.confidence).substr(0, 5);
+
+                    // 在图像顶部绘制文本
+                    int baseline = 0;
+                    cv::Size text_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 1.0, 2, &baseline);
+                    cv::Point text_org(10, text_size.height + 10);
+
+                    // 绘制文本背景
+                    cv::rectangle(result_image, cv::Point(text_org.x - 5, text_org.y - text_size.height - 5),
+                                  cv::Point(text_org.x + text_size.width + 5, text_org.y + baseline + 5),
+                                  cv::Scalar(0, 0, 0), -1);
+
+                    // 绘制文本
+                    cv::putText(result_image, text, text_org, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+
+                    // 保存结果图像
+                    std::string output_path = "../outputs/resnet_" + filename + "_result.jpg";
+                    if (cv::imwrite(output_path, result_image))
+                    {
+                        std::cout << "[INFO] Result saved to: " << output_path << std::endl;
+                        success_count++;
+                    }
+                    else
+                    {
+                        std::cerr << "[ERROR] Failed to save result to: " << output_path << std::endl;
+                    }
+                }
+                else
+                {
+                    std::cerr << "[ERROR] No classification results for: " << filename << std::endl;
+                }
+            }
+            else
+            {
+                std::cerr << "[ERROR] Wrong task type for: " << filename << std::endl;
+            }
+        }
+
+        std::cout << "\n[SUMMARY] Processed " << processed_count << " images, " << success_count << " successful"
+                  << std::endl;
         resnet_model->release();
     }
 

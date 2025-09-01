@@ -23,6 +23,8 @@ class BaseModelImpl : public IModel
     int getModelWidth() const override;
     int getModelHeight() const override;
     int getModelChannels() const override;
+    int getOriginalWidth() const { return original_width_; }
+    int getOriginalHeight() const { return original_height_; }
 
    protected:
     // 子类需要实现的抽象方法
@@ -67,6 +69,8 @@ class BaseModelImpl : public IModel
     int model_width_;
     int model_height_;
     int model_channels_;
+    int original_width_;   // 原始输入图像宽度
+    int original_height_;  // 原始输入图像高度
     bool initialized_;
     bool is_quant_;
 

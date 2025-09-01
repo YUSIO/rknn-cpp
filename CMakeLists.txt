@@ -53,12 +53,12 @@ set_target_properties(basic_usage PROPERTIES
     INSTALL_RPATH "$ORIGIN"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
-add_executable(yolotest examples/yolov3.cpp)
-target_link_libraries(yolotest rknn_cpp)
-set_target_properties(yolotest PROPERTIES
-    INSTALL_RPATH "$ORIGIN"
-    BUILD_WITH_INSTALL_RPATH TRUE
-)
+# add_executable(yolotest examples/yolov3.cpp)
+# target_link_libraries(yolotest rknn_cpp)
+# set_target_properties(yolotest PROPERTIES
+#     INSTALL_RPATH "$ORIGIN"
+#     BUILD_WITH_INSTALL_RPATH TRUE
+# )
 
 # 构建OpenCV示例
 add_executable(opencv_example examples/opencv_example.cpp)

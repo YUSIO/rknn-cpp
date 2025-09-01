@@ -82,7 +82,9 @@ bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
         std::cerr << "Failed to preprocess image" << std::endl;
         return false;
     }
-
+    // Save preprocessed image for debugging
+    cv::imwrite("preprocessed_resnet.jpg", dst_img);
+    std::cout << "[DEBUG] Saved preprocessed image to: preprocessed_resnet.jpg" << std::endl;
     std::cout << "[INFO] Preprocessed dimensions: " << dst_img.cols << " x " << dst_img.rows << std::endl;
     return true;
 }
@@ -125,7 +127,7 @@ InferenceResult ResNetModel::postprocessOutputs(rknn_output* outputs, int output
     // 应用softmax
     applySoftmax(float_output.data(), num_classes);
 
-    // 获取TopK结果 - 与resnet50项目一致
+    // 获取TopK结果
     ClassificationResults results = getTopK(float_output.data(), num_classes, 5);
 
     std::cout << "[RESULT] Found " << results.size() << " classification results" << std::endl;
@@ -134,7 +136,7 @@ InferenceResult ResNetModel::postprocessOutputs(rknn_output* outputs, int output
 
 void ResNetModel::applySoftmax(float* data, int size)
 {
-    // 找到最大值以避免溢出 - 与resnet50项目完全一致
+    // 找到最大值以避免溢出
     float max_val = data[0];
     for (int i = 1; i < size; i++)
     {
@@ -144,7 +146,7 @@ void ResNetModel::applySoftmax(float* data, int size)
         }
     }
 
-    // 减去最大值并计算指数 - 与resnet50项目完全一致
+    // 减去最大值并计算指数
     float sum = 0.0f;
     for (int i = 0; i < size; i++)
     {
@@ -161,18 +163,22 @@ void ResNetModel::applySoftmax(float* data, int size)
 
 ClassificationResults ResNetModel::getTopK(const float* data, int size, int k)
 {
-    // 创建索引-值对的向量
+    // 创建(置信度, 索引)对的向量
     std::vector<std::pair<float, int>> elements;
     elements.reserve(size);
 
     for (int i = 0; i < size; i++)
     {
-        elements.emplace_back(data[i], i);
+        elements.emplace_back(data[i], i);  // (confidence, class_id)
     }
 
-    // 按值降序排列 (部分排序)
+    // 按置信度降序排列
     k = std::min(k, size);
-    std::partial_sort(elements.begin(), elements.begin() + k, elements.end(), std::greater<std::pair<float, int>>());
+    std::partial_sort(elements.begin(), elements.begin() + k, elements.end(),
+                      [](const std::pair<float, int>& a, const std::pair<float, int>& b)
+                      {
+                          return a.first > b.first;  // 只按confidence降序
+                      });
 
     // 构建结果
     ClassificationResults results;
@@ -181,9 +187,9 @@ ClassificationResults ResNetModel::getTopK(const float* data, int size, int k)
     for (int i = 0; i < k; i++)
     {
         ClassificationResult result;
-        result.confidence = elements[i].first;
-        result.class_id = static_cast<uint8_t>(elements[i].second);
-        result.class_name = getClassName(result.class_id);  // 使用实际类名
+        result.confidence = elements[i].first;                       // 置信度
+        result.class_id = static_cast<uint8_t>(elements[i].second);  // 类别ID
+        result.class_name = getClassName(elements[i].second);
         results.push_back(result);
     }
 

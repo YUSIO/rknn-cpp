@@ -1,5 +1,6 @@
 #pragma once
 #include "rknn_cpp/base/base_model_impl.h"
+#include "rknn_cpp/utils/image_utils.h"
 #include <vector>
 
 namespace rknn_cpp
@@ -30,6 +31,7 @@ class Yolov3Model : public BaseModelImpl
     // 成员变量
     std::vector<std::string> class_names_;
     bool class_names_loaded_;
+    utils::LetterboxParams letterbox_params_;  // 保存letterbox预处理参数
     struct YoloLayer
     {
         int grid_h;
@@ -55,5 +57,8 @@ class Yolov3Model : public BaseModelImpl
 
     float calculateIoU(float xmin0, float ymin0, float xmax0, float ymax0, float xmin1, float ymin1, float xmax1,
                        float ymax1) const;
+
+    // Letterbox坐标转换
+    void convertLetterboxToOriginal(DetectionResults& detections, int orig_width, int orig_height) const;
 };
 }  // namespace rknn_cpp

@@ -30,7 +30,7 @@ int main()
         memset(&src_image, 0, sizeof(src_image));
 
         // 加载图像
-        ret = utils::readImage("../inputs/resnet.JPEG", src_image);
+        ret = utils::readImage("../inputs/imagenet/ILSVRC2012_img_val_samples/ILSVRC2012_val_00023732.JPEG", src_image);
         if (!ret)
         {
             std::cerr << "Failed to load image" << std::endl;

@@ -14,6 +14,8 @@ BaseModelImpl::BaseModelImpl()
       model_width_(0),
       model_height_(0),
       model_channels_(0),
+      original_width_(0),
+      original_height_(0),
       initialized_(false),
       is_quant_(false),
       preprocess_buffer_{}
@@ -161,6 +163,10 @@ InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
         return createEmptyResult();
     }
 
+    // 保存原始图像尺寸，用于后处理坐标转换
+    original_width_ = image.width;
+    original_height_ = image.height;
+
     // 1. 预处理图像到复用缓冲区
     if (preprocess_buffer_.virt_addr)
     {
@@ -208,6 +214,10 @@ InferenceResult BaseModelImpl::predict(const cv::Mat& image)
         std::cerr << "Model not initialized!" << std::endl;
         return createEmptyResult();
     }
+
+    // 保存原始图像尺寸，用于后处理坐标转换
+    original_width_ = image.cols;
+    original_height_ = image.rows;
 
     // 1. 直接使用cv::Mat预处理 - 独立Pipeline
     cv::Mat preprocessed_img;
@@ -401,7 +411,7 @@ bool BaseModelImpl::runRKNNInference(const cv::Mat& input_img)
     rknn_input inputs[1];
     memset(inputs, 0, sizeof(inputs));
     inputs[0].index = 0;
-    inputs[0].buf = rgb_img.data;  // 直接使用Mat数据指针，零拷贝
+    inputs[0].buf = rgb_img.data;
     inputs[0].size = rgb_img.total() * rgb_img.elemSize();
     inputs[0].pass_through = 0;
     inputs[0].type = RKNN_TENSOR_UINT8;

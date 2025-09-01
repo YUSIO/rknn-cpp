@@ -63,12 +63,24 @@ bool Yolov3Model::setupModel(const ModelConfig& config)
 bool Yolov3Model::preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img)
 {
     std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing" << std::endl;
-    if (!letterboxPreprocess(src_img, dst_img, 144))
+
+    dst_img = createModelSizedBuffer();
+    if (dst_img.virt_addr == nullptr)
+    {
+        std::cerr << "Failed to create model-sized buffer" << std::endl;
+        return false;
+    }
+
+    // 使用带参数的letterbox预处理，保存参数用于后处理
+    if (!utils::letterboxResizeWithParams(src_img, dst_img, getModelWidth(), getModelHeight(), letterbox_params_, 144))
     {
         std::cerr << "Failed to preprocess image" << std::endl;
         return false;
     }
+
     std::cout << "[INFO] Preprocessed dimensions: " << dst_img.width << " x " << dst_img.height << std::endl;
+    std::cout << "[INFO] Letterbox params - scale: " << letterbox_params_.scale
+              << ", x_pad: " << letterbox_params_.x_pad << ", y_pad: " << letterbox_params_.y_pad << std::endl;
 
     return true;
 }
@@ -76,12 +88,33 @@ bool Yolov3Model::preprocessImage(const image_buffer_t& src_img, image_buffer_t&
 bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
     std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing (cv::Mat)" << std::endl;
-    if (!letterboxPreprocess(src_img, dst_img, 144))
-    {
-        std::cerr << "Failed to preprocess image" << std::endl;
-        return false;
-    }
+
+    // 计算缩放比例，保持长宽比
+    float scale_x = static_cast<float>(getModelWidth()) / src_img.cols;
+    float scale_y = static_cast<float>(getModelHeight()) / src_img.rows;
+    letterbox_params_.scale = std::min(scale_x, scale_y);
+
+    int scaled_width = static_cast<int>(src_img.cols * letterbox_params_.scale);
+    int scaled_height = static_cast<int>(src_img.rows * letterbox_params_.scale);
+
+    // 计算居中位置
+    letterbox_params_.x_pad = (getModelWidth() - scaled_width) / 2;
+    letterbox_params_.y_pad = (getModelHeight() - scaled_height) / 2;
+
+    // 创建目标图像并填充背景色
+    dst_img = cv::Mat(getModelHeight(), getModelWidth(), CV_8UC3, cv::Scalar(144, 144, 144));
+
+    // 缩放源图像
+    cv::Mat resized;
+    cv::resize(src_img, resized, cv::Size(scaled_width, scaled_height));
+
+    // 将缩放后的图像复制到目标图像的中心位置
+    cv::Rect roi(letterbox_params_.x_pad, letterbox_params_.y_pad, scaled_width, scaled_height);
+    resized.copyTo(dst_img(roi));
+
     std::cout << "[INFO] Preprocessed dimensions: " << dst_img.cols << " x " << dst_img.rows << std::endl;
+    std::cout << "[INFO] Letterbox params - scale: " << letterbox_params_.scale
+              << ", x_pad: " << letterbox_params_.x_pad << ", y_pad: " << letterbox_params_.y_pad << std::endl;
 
     return true;
 }
@@ -169,7 +202,13 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
 
         detections.push_back(detection);
     }
-    std::cout << "[RESULT] Final detections: " << detections.size() << std::endl;
+
+    std::cout << "[RESULT] Final detections before coordinate conversion: " << detections.size() << std::endl;
+
+    // 将坐标从letterbox空间转换回原始图像空间
+    convertLetterboxToOriginal(detections, getOriginalWidth(), getOriginalHeight());
+
+    std::cout << "[RESULT] Final detections after coordinate conversion: " << detections.size() << std::endl;
 
     // 使用基类的便利方法创建结果
     return createDetectionResult(detections);
@@ -532,6 +571,45 @@ std::string Yolov3Model::getClassName(int class_id) const
     {
         // 如果没有加载类名文件或ID超出范围，返回默认名称
         return "class_" + std::to_string(class_id);
+    }
+}
+
+void Yolov3Model::convertLetterboxToOriginal(DetectionResults& detections, int orig_width, int orig_height) const
+{
+    std::cout << "\n[LETTERBOX] Converting coordinates to original image space" << std::endl;
+    std::cout << "            Original size: " << orig_width << " x " << orig_height << std::endl;
+    std::cout << "            Scale: " << letterbox_params_.scale << ", Pads: (" << letterbox_params_.x_pad << ", "
+              << letterbox_params_.y_pad << ")" << std::endl;
+
+    for (auto& detection : detections)
+    {
+        // 保存原始坐标用于调试
+        float orig_x = detection.x;
+        float orig_y = detection.y;
+        float orig_w = detection.width;
+        float orig_h = detection.height;
+
+        // 转换坐标：从letterbox空间转换到原始图像空间
+        // 1. 减去pad偏移
+        float x_no_pad = detection.x - letterbox_params_.x_pad;
+        float y_no_pad = detection.y - letterbox_params_.y_pad;
+
+        // 2. 除以scale恢复原始尺寸
+        detection.x = static_cast<uint16_t>(std::max(0.0f, x_no_pad / letterbox_params_.scale));
+        detection.y = static_cast<uint16_t>(std::max(0.0f, y_no_pad / letterbox_params_.scale));
+        detection.width = static_cast<uint16_t>(detection.width / letterbox_params_.scale);
+        detection.height = static_cast<uint16_t>(detection.height / letterbox_params_.scale);
+
+        // 3. 确保坐标在原图范围内
+        detection.x = std::min(detection.x, static_cast<uint16_t>(orig_width));
+        detection.y = std::min(detection.y, static_cast<uint16_t>(orig_height));
+        detection.width = std::min(detection.width, static_cast<uint16_t>(orig_width - detection.x));
+        detection.height = std::min(detection.height, static_cast<uint16_t>(orig_height - detection.y));
+
+        std::cout << "            [" << detection.class_name << "] "
+                  << "(" << orig_x << "," << orig_y << "," << orig_w << "," << orig_h << ") -> "
+                  << "(" << detection.x << "," << detection.y << "," << detection.width << "," << detection.height
+                  << ")" << std::endl;
     }
 }
 }  // namespace rknn_cpp
