@@ -1,5 +1,4 @@
 #include "rknn_cpp/base/base_model_impl.h"
-#include "rknn_cpp/utils/image_utils.h"
 #include <iostream>
 #include <fstream>
 #include <cstring>
@@ -130,15 +129,7 @@ bool BaseModelImpl::initialize(const ModelConfig& config)
     outputs_.resize(io_num_.n_output);
     memset(outputs_.data(), 0, outputs_.size() * sizeof(rknn_output));
 
-    // 8. 分配预处理缓冲区（按模型输入尺寸）
-    preprocess_buffer_ = utils::createImageBuffer(model_width_, model_height_, ImageFormat::RGB888);
-    if (preprocess_buffer_.virt_addr == nullptr)
-    {
-        std::cerr << "Failed to allocate preprocess buffer" << std::endl;
-        return false;
-    }
-
-    // 9. 调用子类的模型设置
+    // 8. 调用子类的模型设置
     if (!setupModel(config))
     {
         std::cerr << "setupModel failed!" << std::endl;
@@ -152,58 +143,6 @@ bool BaseModelImpl::initialize(const ModelConfig& config)
     std::cout << "[CONFIG] Quantization   : " << (is_quant_ ? "Enabled" : "Disabled") << std::endl;
     std::cout << std::string(60, '=') << std::endl;
     return true;
-}
-
-InferenceResult BaseModelImpl::predict(const image_buffer_t& image)
-{
-    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    if (!initialized_)
-    {
-        std::cerr << "Model not initialized!" << std::endl;
-        return createEmptyResult();
-    }
-
-    // 保存原始图像尺寸，用于后处理坐标转换
-    original_width_ = image.width;
-    original_height_ = image.height;
-
-    // 1. 预处理图像到复用缓冲区
-    if (preprocess_buffer_.virt_addr)
-    {
-        memset(preprocess_buffer_.virt_addr, 0, preprocess_buffer_.size);
-    }
-
-    if (!preprocessImage(image, preprocess_buffer_))
-    {
-        std::cerr << "Image preprocessing failed!" << std::endl;
-        return createEmptyResult();
-    }
-    std::chrono::steady_clock::time_point point1 = std::chrono::steady_clock::now();
-    std::chrono::duration<double, std::milli> preprocess_duration = point1 - start;
-    std::cout << "[INFO] Image preprocessing time: " << preprocess_duration.count() << " ms" << std::endl;
-
-    // 2. 执行推理
-    if (!runRKNNInference(preprocess_buffer_))
-    {
-        std::cerr << "RKNN inference failed!" << std::endl;
-        return createEmptyResult();
-    }
-    std::chrono::steady_clock::time_point point2 = std::chrono::steady_clock::now();
-    std::chrono::duration<double, std::milli> inference_duration = point2 - point1;
-    std::cout << "[INFO] RKNN inference time: " << inference_duration.count() << " ms" << std::endl;
-
-    // 3. 后处理
-    InferenceResult result = postprocessOutputs(outputs_.data(), outputs_.size());
-    std::chrono::steady_clock::time_point point3 = std::chrono::steady_clock::now();
-    std::chrono::duration<double, std::milli> postprocess_duration = point3 - point2;
-    std::cout << "[INFO] Postprocess time: " << postprocess_duration.count() << " ms" << std::endl;
-    std::cout << "[INFO] Total inference time: "
-              << (preprocess_duration + inference_duration + postprocess_duration).count() << " ms" << std::endl;
-    // 4. 释放输出资源
-    rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
-
-    // 5. 返回推理结果（预处理缓冲区在成员中复用，不再释放）
-    return result;
 }
 
 InferenceResult BaseModelImpl::predict(const cv::Mat& image)
@@ -269,9 +208,6 @@ void BaseModelImpl::release()
 
     outputs_.clear();
 
-    // 释放预处理缓冲区
-    utils::freeImage(preprocess_buffer_);
-
     input_attrs_.clear();
     output_attrs_.clear();
 
@@ -329,49 +265,6 @@ bool BaseModelImpl::loadRKNNModel(const std::string& model_path)
     if (ret < 0)
     {
         std::cerr << "rknn_init failed! ret=" << ret << std::endl;
-        return false;
-    }
-
-    return true;
-}
-
-bool BaseModelImpl::runRKNNInference(const image_buffer_t& input_img)
-{
-    // 1. 设置输入
-    rknn_input inputs[1];
-    memset(inputs, 0, sizeof(inputs));
-    inputs[0].index = 0;
-    inputs[0].buf = input_img.virt_addr;
-    inputs[0].size = input_img.size;
-    inputs[0].pass_through = 0;
-    inputs[0].type = RKNN_TENSOR_UINT8;
-    inputs[0].fmt = RKNN_TENSOR_NHWC;
-
-    int ret = rknn_inputs_set(rknn_ctx_, io_num_.n_input, inputs);
-    if (ret < 0)
-    {
-        std::cerr << "rknn_inputs_set failed! ret=" << ret << std::endl;
-        return false;
-    }
-
-    // 2. 执行推理
-    ret = rknn_run(rknn_ctx_, nullptr);
-    if (ret < 0)
-    {
-        std::cerr << "rknn_run failed! ret=" << ret << std::endl;
-        return false;
-    }
-
-    // 3. 获取输出 - 设置want_float以获取浮点数据
-    for (uint32_t i = 0; i < io_num_.n_output; i++)
-    {
-        outputs_[i].want_float = (!is_quant_);
-    }
-
-    ret = rknn_outputs_get(rknn_ctx_, io_num_.n_output, outputs_.data(), nullptr);
-    if (ret < 0)
-    {
-        std::cerr << "rknn_outputs_get failed! ret=" << ret << std::endl;
         return false;
     }
 
@@ -557,53 +450,6 @@ InferenceResult BaseModelImpl::createEmptyResult() const
     }
 
     return result;
-}
-
-// ===== 图像处理帮助方法 =====
-
-image_buffer_t BaseModelImpl::createModelSizedBuffer() const
-{
-    return preprocess_buffer_;
-}
-
-bool BaseModelImpl::standardPreprocess(const image_buffer_t& src_img, image_buffer_t& dst_img) const
-{
-    dst_img = createModelSizedBuffer();
-    if (dst_img.virt_addr == nullptr)
-    {
-        return false;
-    }
-
-    // 使用标准缩放 (拉伸到目标尺寸，不保持长宽比)
-    if (!utils::standardResize(src_img, dst_img, model_width_, model_height_))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool BaseModelImpl::letterboxPreprocess(const image_buffer_t& src_img, image_buffer_t& dst_img,
-                                        unsigned char bg_color) const
-{
-    dst_img = createModelSizedBuffer();
-    if (dst_img.virt_addr == nullptr)
-    {
-        return false;
-    }
-
-    // 使用letterbox (保持长宽比，填充背景色)
-    if (!utils::letterboxResize(src_img, dst_img, model_width_, model_height_, bg_color))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-void BaseModelImpl::freeImageBuffer(image_buffer_t& image) const
-{
-    utils::freeImage(image);
 }
 
 bool BaseModelImpl::standardPreprocess(const cv::Mat& src_img, cv::Mat& dst_img) const

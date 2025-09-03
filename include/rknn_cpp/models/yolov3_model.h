@@ -1,11 +1,15 @@
 #pragma once
 #include "rknn_cpp/base/base_model_impl.h"
-#include "rknn_cpp/utils/image_utils.h"
 #include <vector>
 
 namespace rknn_cpp
 {
-
+struct LetterboxParams
+{
+    int x_pad;
+    int y_pad;
+    float scale;
+};
 /**
  * @brief Yolov3检测模型实现
  * 基于BaseModelImpl，提供Yolov3模型的检测功能
@@ -23,7 +27,6 @@ class Yolov3Model : public BaseModelImpl
    protected:
     // 实现BaseModelImpl的抽象方法
     bool setupModel(const ModelConfig& config) override;
-    bool preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img) override;
     bool preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img) override;  // 新增cv::Mat重载
     InferenceResult postprocessOutputs(rknn_output* outputs, int output_count) override;
 
@@ -31,7 +34,7 @@ class Yolov3Model : public BaseModelImpl
     // 成员变量
     std::vector<std::string> class_names_;
     bool class_names_loaded_;
-    utils::LetterboxParams letterbox_params_;  // 保存letterbox预处理参数
+    LetterboxParams letterbox_params_;  // 保存letterbox预处理参数
     struct YoloLayer
     {
         int grid_h;

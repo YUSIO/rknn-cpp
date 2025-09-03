@@ -34,7 +34,6 @@ set(SOURCES
     src/base/base_model_impl.cpp
     src/models/resnet_model.cpp
     src/models/yolov3_model.cpp
-    src/utils/image_utils.cpp
 )
 
 # 创建库
@@ -46,19 +45,6 @@ if(OpenCV_FOUND)
     target_link_libraries(rknn_cpp ${OpenCV_LIBS})
 endif()
 
-# 构建basic_usage示例
-add_executable(basic_usage examples/basic_usage.cpp)
-target_link_libraries(basic_usage rknn_cpp)
-set_target_properties(basic_usage PROPERTIES
-    INSTALL_RPATH "$ORIGIN"
-    BUILD_WITH_INSTALL_RPATH TRUE
-)
-# add_executable(yolotest examples/yolov3.cpp)
-# target_link_libraries(yolotest rknn_cpp)
-# set_target_properties(yolotest PROPERTIES
-#     INSTALL_RPATH "$ORIGIN"
-#     BUILD_WITH_INSTALL_RPATH TRUE
-# )
 
 # 构建OpenCV示例
 add_executable(opencv_example examples/opencv_example.cpp)

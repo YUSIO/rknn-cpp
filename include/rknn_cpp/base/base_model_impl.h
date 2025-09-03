@@ -16,8 +16,7 @@ class BaseModelImpl : public IModel
 
     // 实现IModel接口
     bool initialize(const ModelConfig& config = {}) override final;
-    InferenceResult predict(const image_buffer_t& image) override final;  // 更新返回类型
-    InferenceResult predict(const cv::Mat& image);                        // 新增cv::Mat重载
+    InferenceResult predict(const cv::Mat& image);
     void release() override;
     bool isInitialized() const override;
     int getModelWidth() const override;
@@ -29,13 +28,11 @@ class BaseModelImpl : public IModel
    protected:
     // 子类需要实现的抽象方法
     virtual bool setupModel(const ModelConfig& config) = 0;
-    virtual bool preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img) = 0;
     virtual bool preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img) = 0;              // 新增cv::Mat重载
     virtual InferenceResult postprocessOutputs(rknn_output* outputs, int output_count) = 0;  // 更新返回类型
 
     // 为子类提供的工具方法
     bool loadRKNNModel(const std::string& model_path);
-    bool runRKNNInference(const image_buffer_t& input_img);
     bool runRKNNInference(const cv::Mat& input_img);  // 新增cv::Mat重载
     void dumpTensorAttrs() const;
 
@@ -45,14 +42,10 @@ class BaseModelImpl : public IModel
     InferenceResult createEmptyResult() const;
 
     // 为子类提供的图像处理帮助方法
-    image_buffer_t createModelSizedBuffer() const;
-    bool standardPreprocess(const image_buffer_t& src_img, image_buffer_t& dst_img) const;
     bool standardPreprocess(const cv::Mat& src_img, cv::Mat& dst_img) const;  // 新增cv::Mat重载
-    bool letterboxPreprocess(const image_buffer_t& src_img, image_buffer_t& dst_img,
-                             unsigned char bg_color = 114) const;
+
     bool letterboxPreprocess(const cv::Mat& src_img, cv::Mat& dst_img,
                              unsigned char bg_color = 114) const;  // 新增cv::Mat重载
-    void freeImageBuffer(image_buffer_t& image) const;
 
     // 为子类提供的模型属性访问
     bool isQuantized() const { return is_quant_; }
@@ -78,7 +71,7 @@ class BaseModelImpl : public IModel
     std::vector<rknn_output> outputs_;
 
     // 预处理缓冲区
-    image_buffer_t preprocess_buffer_;
+    cv::Mat preprocess_buffer_;
 };
 
 }  // namespace rknn_cpp

@@ -22,7 +22,6 @@ class ResNetModel : public BaseModelImpl
    protected:
     // 实现BaseModelImpl的抽象方法
     bool setupModel(const ModelConfig& config) override;
-    bool preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img) override;
     bool preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img) override;  // 新增cv::Mat重载
     InferenceResult postprocessOutputs(rknn_output* outputs, int output_count) override;
 

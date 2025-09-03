@@ -19,11 +19,8 @@
  * auto model = std::make_unique<ResNetModel>();
  * model->initialize("resnet50.rknn");
  *
- * // 使用image_buffer_t
- * auto image = utils::readImage("image.jpg");
- * auto result = model->predict(image);
  *
- * // 或者直接使用cv::Mat
+ * 使用cv::Mat
  * cv::Mat mat = cv::imread("image.jpg");
  * auto result2 = model->predict(mat);
  *
@@ -46,9 +43,6 @@
 // 具体模型实现
 #include "rknn_cpp/models/resnet_model.h"
 #include "rknn_cpp/models/yolov3_model.h"
-
-// 工具类
-#include "rknn_cpp/utils/image_utils.h"
 
 /**
  * @namespace rknn_cpp

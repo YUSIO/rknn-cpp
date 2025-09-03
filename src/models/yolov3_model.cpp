@@ -1,5 +1,4 @@
 #include "rknn_cpp/models/yolov3_model.h"
-#include "rknn_cpp/utils/image_utils.h"
 #include "opencv2/opencv.hpp"
 #include <iostream>
 #include <algorithm>
@@ -60,33 +59,13 @@ bool Yolov3Model::setupModel(const ModelConfig& config)
 
     return true;
 }
-bool Yolov3Model::preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img)
-{
-    std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing" << std::endl;
-
-    dst_img = createModelSizedBuffer();
-    if (dst_img.virt_addr == nullptr)
-    {
-        std::cerr << "Failed to create model-sized buffer" << std::endl;
-        return false;
-    }
-
-    // 使用带参数的letterbox预处理，保存参数用于后处理
-    if (!utils::letterboxResizeWithParams(src_img, dst_img, getModelWidth(), getModelHeight(), letterbox_params_, 144))
-    {
-        std::cerr << "Failed to preprocess image" << std::endl;
-        return false;
-    }
-
-    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.width << " x " << dst_img.height << std::endl;
-    std::cout << "[INFO] Letterbox params - scale: " << letterbox_params_.scale
-              << ", x_pad: " << letterbox_params_.x_pad << ", y_pad: " << letterbox_params_.y_pad << std::endl;
-
-    return true;
-}
 
 bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
+    if (src_img.channels() == 1 && getModelChannels() == 3)
+    {
+        cv::cvtColor(src_img, src_img, cv::COLOR_GRAY2BGR);
+    }
     std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing (cv::Mat)" << std::endl;
 
     // 计算缩放比例，保持长宽比

@@ -30,7 +30,7 @@ int main()
         }
 
         // 获取所有JPEG图片文件
-        std::string image_dir = "../inputs/imagenet/ILSVRC2012_img_val_samples";
+        std::string image_dir = "../inputs";
         std::vector<std::string> image_files;
 
         try
@@ -167,7 +167,7 @@ int main()
         }
 
         // 直接使用cv::Mat加载图像
-        cv::Mat image = cv::imread("../inputs/image.png");
+        cv::Mat image = cv::imread("../inputs/gray.jpg");
         if (image.empty())
         {
             std::cerr << "Failed to load image" << std::endl;

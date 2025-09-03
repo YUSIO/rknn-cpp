@@ -15,29 +15,6 @@ enum class ModelTask
     UNKNOWN
 };
 
-// 图像格式枚举
-enum class ImageFormat
-{
-    GRAY8,
-    RGB888,
-    RGBA8888,
-    YUV420SP_NV21,
-    YUV420SP_NV12
-};
-
-// 图像缓冲区结构
-struct image_buffer_t
-{
-    int width;
-    int height;
-    int width_stride;
-    int height_stride;
-    ImageFormat format;
-    unsigned char* virt_addr;
-    int size;
-    int fd;
-};
-
 // 预处理配置基类
 struct PreprocessConfig
 {

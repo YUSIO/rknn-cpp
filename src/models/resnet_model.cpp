@@ -1,5 +1,4 @@
 #include "rknn_cpp/models/resnet_model.h"
-#include "rknn_cpp/utils/image_utils.h"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -57,23 +56,12 @@ bool ResNetModel::setupModel(const ModelConfig& config)
     return true;
 }
 
-bool ResNetModel::preprocessImage(const image_buffer_t& src_img, image_buffer_t& dst_img)
-{
-    std::cout << "\n[PREPROCESS] ResNet image preprocessing" << std::endl;
-
-    // 使用基类提供的标准预处理方法
-    if (!standardPreprocess(src_img, dst_img))
-    {
-        std::cerr << "Failed to preprocess image" << std::endl;
-        return false;
-    }
-
-    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.width << " x " << dst_img.height << std::endl;
-    return true;
-}
-
 bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
+    if (src_img.channels() == 1 && getModelChannels() == 3)
+    {
+        cv::cvtColor(src_img, src_img, cv::COLOR_GRAY2BGR);
+    }
     std::cout << "\n[PREPROCESS] ResNet image preprocessing (cv::Mat)" << std::endl;
 
     // 使用基类提供的标准预处理方法

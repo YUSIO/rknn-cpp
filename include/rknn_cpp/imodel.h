@@ -16,8 +16,7 @@ class IModel
 
     // 核心接口
     virtual bool initialize(const ModelConfig& config) = 0;
-    virtual InferenceResult predict(const image_buffer_t& image) = 0;  // 返回统一结果
-    virtual InferenceResult predict(const cv::Mat& image) = 0;         // 新增cv::Mat重载
+    virtual InferenceResult predict(const cv::Mat& image) = 0;
     virtual void release() = 0;
 
     // 信息获取接口
