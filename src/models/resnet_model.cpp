@@ -82,10 +82,6 @@ bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
         std::cerr << "Failed to preprocess image" << std::endl;
         return false;
     }
-    // Save preprocessed image for debugging
-    cv::imwrite("preprocessed_resnet.jpg", dst_img);
-    std::cout << "[DEBUG] Saved preprocessed image to: preprocessed_resnet.jpg" << std::endl;
-    std::cout << "[INFO] Preprocessed dimensions: " << dst_img.cols << " x " << dst_img.rows << std::endl;
     return true;
 }
 
