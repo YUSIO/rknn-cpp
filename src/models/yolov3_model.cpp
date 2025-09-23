@@ -62,19 +62,32 @@ bool Yolov3Model::setupModel(const ModelConfig& config)
 
 bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
+    cv::Mat input_img{};
+    cv::Mat safe_img = src_img.clone();
+
+    std::cout << "[DEBUG] src_img.empty(): " << src_img.empty() << std::endl;
+    std::cout << "[DEBUG] src_img.channels(): " << src_img.channels() << std::endl;
+    std::cout << "[DEBUG] getModelChannels(): " << getModelChannels() << std::endl;
+    std::cout << "[DEBUG] src_img.type(): " << src_img.type() << std::endl;
+    std::cout << "[DEBUG] src_img.size(): " << src_img.size() << std::endl;
+    
     if (src_img.channels() == 1 && getModelChannels() == 3)
     {
-        cv::cvtColor(src_img, src_img, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(safe_img, input_img, cv::COLOR_GRAY2BGR);
+    }
+    else
+    {
+        input_img = safe_img;
     }
     std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing (cv::Mat)" << std::endl;
 
     // 计算缩放比例，保持长宽比
-    float scale_x = static_cast<float>(getModelWidth()) / src_img.cols;
-    float scale_y = static_cast<float>(getModelHeight()) / src_img.rows;
+    float scale_x = static_cast<float>(getModelWidth()) / input_img.cols;
+    float scale_y = static_cast<float>(getModelHeight()) / input_img.rows;
     letterbox_params_.scale = std::min(scale_x, scale_y);
 
-    int scaled_width = static_cast<int>(src_img.cols * letterbox_params_.scale);
-    int scaled_height = static_cast<int>(src_img.rows * letterbox_params_.scale);
+    int scaled_width = static_cast<int>(input_img.cols * letterbox_params_.scale);
+    int scaled_height = static_cast<int>(input_img.rows * letterbox_params_.scale);
 
     // 计算居中位置
     letterbox_params_.x_pad = (getModelWidth() - scaled_width) / 2;
@@ -85,7 +98,7 @@ bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 
     // 缩放源图像
     cv::Mat resized;
-    cv::resize(src_img, resized, cv::Size(scaled_width, scaled_height));
+    cv::resize(input_img, resized, cv::Size(scaled_width, scaled_height));
 
     // 将缩放后的图像复制到目标图像的中心位置
     cv::Rect roi(letterbox_params_.x_pad, letterbox_params_.y_pad, scaled_width, scaled_height);

@@ -58,14 +58,19 @@ bool ResNetModel::setupModel(const ModelConfig& config)
 
 bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
+    cv::Mat input_img{};
     if (src_img.channels() == 1 && getModelChannels() == 3)
     {
-        cv::cvtColor(src_img, src_img, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(src_img, input_img, cv::COLOR_GRAY2BGR);
+    }
+    else
+    {
+        input_img = src_img;
     }
     std::cout << "\n[PREPROCESS] ResNet image preprocessing (cv::Mat)" << std::endl;
 
     // 使用基类提供的标准预处理方法
-    if (!standardPreprocess(src_img, dst_img))
+    if (!standardPreprocess(input_img, dst_img))
     {
         std::cerr << "Failed to preprocess image" << std::endl;
         return false;

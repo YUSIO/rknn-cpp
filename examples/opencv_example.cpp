@@ -167,7 +167,7 @@ int main()
         }
 
         // 直接使用cv::Mat加载图像
-        cv::Mat image = cv::imread("../inputs/gray.jpg");
+        cv::Mat image = cv::imread("../inputs/gray.jpg",CV_8U);
         if (image.empty())
         {
             std::cerr << "Failed to load image" << std::endl;
