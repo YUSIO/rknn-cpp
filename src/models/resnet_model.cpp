@@ -61,11 +61,11 @@ bool ResNetModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
     cv::Mat input_img{};
     if (src_img.channels() == 1 && getModelChannels() == 3)
     {
-        cv::cvtColor(src_img, input_img, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(src_img, input_img, cv::COLOR_GRAY2RGB);
     }
     else
     {
-        input_img = src_img;
+        cv::cvtColor(src_img, input_img, cv::COLOR_BGR2RGB);
     }
     std::cout << "\n[PREPROCESS] ResNet image preprocessing (cv::Mat)" << std::endl;
 
@@ -97,7 +97,7 @@ InferenceResult ResNetModel::postprocessOutputs(rknn_output* outputs, int output
 
     // 获取输出数据
 
-    int8_t* output_data = static_cast<int8_t*>(outputs[0].buf);
+    float* output_data = static_cast<float*>(outputs[0].buf);
     if (output_data == nullptr)
     {
         std::cerr << "Output buffer is null" << std::endl;
@@ -106,12 +106,10 @@ InferenceResult ResNetModel::postprocessOutputs(rknn_output* outputs, int output
 
     int num_classes = output_attrs[0].n_elems;
     std::cout << "[INFO] Processing " << num_classes << " classification classes" << std::endl;
-    float scale = output_attrs[0].scale;
-    int32_t zp = output_attrs[0].zp;
     std::vector<float> float_output(num_classes);
     for (int i = 0; i < num_classes; i++)
     {
-        float_output[i] = deqnt_affine_to_f32(output_data[i], zp, scale);
+        float_output[i] = output_data[i];
     }
     // 应用softmax
     applySoftmax(float_output.data(), num_classes);
@@ -143,7 +141,7 @@ void ResNetModel::applySoftmax(float* data, int size)
         sum += data[i];
     }
 
-    // 归一化 - 与resnet50项目完全一致
+    // 归一化
     for (int i = 0; i < size; i++)
     {
         data[i] /= sum;
@@ -251,8 +249,4 @@ std::string ResNetModel::getClassName(int class_id) const
     }
 }
 
-float ResNetModel::deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) const
-{
-    return scale * ((float)qnt - (float)zp);
-}
 }  // namespace rknn_cpp

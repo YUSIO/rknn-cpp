@@ -13,8 +13,8 @@
 
 namespace rknn_cpp
 {
-static const int PROP_BOX_SIZE = 85;  // 4(bbox) + 1(conf) + 80(classes)
-static const int OBJ_CLASS_NUM = 80;  // COCO数据集类别数
+static const int PROP_BOX_SIZE = 6;  // 4(bbox) + 1(conf) + 80(classes)
+static const int OBJ_CLASS_NUM = 1;  // COCO数据集类别数
 
 Yolov3Model::Yolov3Model() : class_names_loaded_(false) {}
 ModelTask Yolov3Model::getTaskType() const
@@ -70,7 +70,7 @@ bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
     std::cout << "[DEBUG] getModelChannels(): " << getModelChannels() << std::endl;
     std::cout << "[DEBUG] src_img.type(): " << src_img.type() << std::endl;
     std::cout << "[DEBUG] src_img.size(): " << src_img.size() << std::endl;
-    
+
     if (src_img.channels() == 1 && getModelChannels() == 3)
     {
         cv::cvtColor(safe_img, input_img, cv::COLOR_GRAY2BGR);
@@ -122,16 +122,19 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     }
 
     // YOLOv3的三个检测层配置
-    std::vector<YoloLayer> yolo_layers = {
-        {40, 40, 16, {10, 14, 23, 27, 37, 58}},      // 中目标检测层
-        {20, 20, 32, {81, 82, 135, 169, 344, 319}},  // 大目标检测层
-    };
+    // std::vector<YoloLayer> yolo_layers = {
+    //     {40, 40, 16, {10, 14, 23, 27, 37, 58}},      // 中目标检测层
+    //     {20, 20, 32, {81, 82, 135, 169, 344, 319}},  // 大目标检测层
+    // };
+    std::vector<YoloLayer> yolo_layers = {{40, 40, 16, {3.59968, 3.59968, 4.5352, 3.80864, 4.55072, 4.54688}},
+                                          {20, 20, 32, {5.34368, 4.57824, 4.81248, 5.6016, 6.67584, 5.71488}}};
     const auto& output_attrs = getOutputAttrs();
     std::vector<float> boxes;
     std::vector<float> objProbs;
     std::vector<int> classId;
 
     float conf_threshold = 0.25f;  // 可以作为配置参数
+    float nms_threshold = 0.1f;
     int total_valid_boxes = 0;
 
     // 处理每个输出层
@@ -175,7 +178,7 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     std::cout << "      Total detections: " << total_valid_boxes << std::endl;
 
     // 应用NMS
-    std::vector<int> keep_indices = applyNMS(boxes, objProbs, classId, 0.45f);
+    std::vector<int> keep_indices = applyNMS(boxes, objProbs, classId, nms_threshold);
 
     // 构建最终的检测结果
     DetectionResults detections;
@@ -187,10 +190,10 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
         detection.class_id = static_cast<uint16_t>(classId[idx]);
         detection.class_name = getClassName(classId[idx]);
         detection.confidence = objProbs[idx];
-        detection.x = static_cast<uint16_t>(boxes[idx * 4]);
-        detection.y = static_cast<uint16_t>(boxes[idx * 4 + 1]);
-        detection.width = static_cast<uint16_t>(boxes[idx * 4 + 2]);
-        detection.height = static_cast<uint16_t>(boxes[idx * 4 + 3]);
+        detection.x = static_cast<uint16_t>(round(boxes[idx * 4]));
+        detection.y = static_cast<uint16_t>(round(boxes[idx * 4 + 1]));
+        detection.width = static_cast<uint16_t>(round(boxes[idx * 4 + 2]));
+        detection.height = static_cast<uint16_t>(round(boxes[idx * 4 + 3]));
 
         detections.push_back(detection);
     }
@@ -204,7 +207,7 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
 
     // 使用基类的便利方法创建结果
     return createDetectionResult(detections);
-}
+}  // namespace rknn_cpp
 
 bool Yolov3Model::loadClassNames(const std::string& file_path)
 {
@@ -310,8 +313,8 @@ int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLaye
 
                         box_x = (box_x + j) * static_cast<float>(layer.stride);
                         box_y = (box_y + i) * static_cast<float>(layer.stride);
-                        box_w *= static_cast<float>(layer.anchors[a * 2]);
-                        box_h *= static_cast<float>(layer.anchors[a * 2 + 1]);
+                        box_w *= (layer.anchors[a * 2]);
+                        box_h *= (layer.anchors[a * 2 + 1]);
 
                         box_x -= (box_w / 2.0f);
                         box_y -= (box_h / 2.0f);
@@ -381,8 +384,8 @@ int Yolov3Model::processYoloLayer(void* input, bool is_quantized, const YoloLaye
 
                         box_x = (box_x + j) * static_cast<float>(layer.stride);
                         box_y = (box_y + i) * static_cast<float>(layer.stride);
-                        box_w *= static_cast<float>(layer.anchors[a * 2]);
-                        box_h *= static_cast<float>(layer.anchors[a * 2 + 1]);
+                        box_w *= (layer.anchors[a * 2]);
+                        box_h *= (layer.anchors[a * 2 + 1]);
 
                         box_x -= (box_w / 2.0f);
                         box_y -= (box_h / 2.0f);

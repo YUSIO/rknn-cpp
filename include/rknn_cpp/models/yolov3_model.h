@@ -40,7 +40,7 @@ class Yolov3Model : public BaseModelImpl
         int grid_h;
         int grid_w;
         int stride;
-        std::vector<int> anchors;
+        std::vector<double> anchors;
     };
     // 类别名称相关
     bool loadClassNames(const std::string& filepath);

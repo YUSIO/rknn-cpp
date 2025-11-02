@@ -37,8 +37,5 @@ class ResNetModel : public BaseModelImpl
     // 成员变量
     std::vector<std::string> class_names_;
     bool class_names_loaded_;
-
-    // 反量化
-    float deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) const;
 };
 }  // namespace rknn_cpp
