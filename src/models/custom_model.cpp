@@ -1,0 +1,251 @@
+#include "rknn_cpp/models/custom_model.h"
+#include <iostream>
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+
+namespace rknn_cpp
+{
+
+CustomModel::CustomModel() : class_names_loaded_(false) {}
+
+ModelTask CustomModel::getTaskType() const
+{
+    return ModelTask::CLASSIFICATION;
+}
+
+std::string CustomModel::getModelName() const
+{
+    return "CustomNet";
+}
+
+bool CustomModel::setupModel(const ModelConfig& config)
+{
+    std::cout << "\n[SETUP] Configuring CustomNet model parameters" << std::endl;
+
+    const auto& input_attrs = getInputAttrs();
+    const auto& output_attrs = getOutputAttrs();
+
+    if (input_attrs.empty() || output_attrs.empty())
+    {
+        std::cerr << "Invalid model tensors" << std::endl;
+        return false;
+    }
+    // 加载类别文件
+    auto class_file_it = config.find("class_file");
+    if (class_file_it != config.end() && !class_file_it->second.empty())
+    {
+        if (!loadClassNames(class_file_it->second))
+        {
+            std::cout << "[WARN] Failed to load class names: " << class_file_it->second << std::endl;
+        }
+    }
+
+    if (class_names_loaded_)
+    {
+        std::cout << "[INFO] Class names loaded: " << class_names_.size() << " classes" << std::endl;
+    }
+    else
+    {
+        std::cout << "[INFO] Using default class names (no file provided)" << std::endl;
+    }
+
+    return true;
+}
+
+bool CustomModel::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
+{
+    cv::Mat input_img{};
+
+    // 使用基类提供的标准预处理方法
+    if (!standardPreprocess(src_img, input_img))
+    {
+        std::cerr << "Failed to preprocess image" << std::endl;
+        return false;
+    }
+    if (src_img.channels() == 1 && getModelChannels() == 1)
+    {
+        dst_img = input_img;
+    }
+    else if (src_img.channels() == 3 && getModelChannels() == 1)
+    {
+        cv::cvtColor(input_img, dst_img, cv::COLOR_BGR2GRAY);
+    }
+    std::cout << "\n[PREPROCESS] CustomNet image preprocessing (cv::Mat)" << std::endl;
+
+    return true;
+}
+
+InferenceResult CustomModel::postprocessOutputs(rknn_output* outputs, int output_count)
+{
+    std::cout << "\n[POSTPROCESS] CustomNet classification analysis" << std::endl;
+
+    if (outputs == nullptr || output_count <= 0)
+    {
+        std::cerr << "Invalid outputs" << std::endl;
+        return createClassificationResult({});
+    }
+
+    const auto& output_attrs = getOutputAttrs();
+    if (output_attrs.empty())
+    {
+        std::cerr << "No output attributes available" << std::endl;
+        return createClassificationResult({});
+    }
+
+    // 获取输出数据
+
+    float* output_data = static_cast<float*>(outputs[0].buf);
+    if (output_data == nullptr)
+    {
+        std::cerr << "Output buffer is null" << std::endl;
+        return createClassificationResult({});
+    }
+
+    int num_classes = output_attrs[0].n_elems;
+    std::cout << "[INFO] Processing " << num_classes << " classification classes" << std::endl;
+    std::vector<float> float_output(num_classes);
+    for (int i = 0; i < num_classes; i++)
+    {
+        float_output[i] = output_data[i];
+    }
+    // 应用softmax
+    applySoftmax(float_output.data(), num_classes);
+
+    // 获取TopK结果
+    ClassificationResults results = getTopK(float_output.data(), num_classes, 5);
+
+    std::cout << "[RESULT] Found " << results.size() << " classification results" << std::endl;
+    return createClassificationResult(results);
+}
+
+void CustomModel::applySoftmax(float* data, int size)
+{
+    // 找到最大值以避免溢出
+    float max_val = data[0];
+    for (int i = 1; i < size; i++)
+    {
+        if (data[i] > max_val)
+        {
+            max_val = data[i];
+        }
+    }
+
+    // 减去最大值并计算指数
+    float sum = 0.0f;
+    for (int i = 0; i < size; i++)
+    {
+        data[i] = expf(data[i] - max_val);  // 使用expf而不是std::exp
+        sum += data[i];
+    }
+
+    // 归一化
+    for (int i = 0; i < size; i++)
+    {
+        data[i] /= sum;
+    }
+}
+
+ClassificationResults CustomModel::getTopK(const float* data, int size, int k)
+{
+    // 创建(置信度, 索引)对的向量
+    std::vector<std::pair<float, int>> elements;
+    elements.reserve(size);
+
+    for (int i = 0; i < size; i++)
+    {
+        elements.emplace_back(data[i], i);  // (confidence, class_id)
+    }
+
+    // 按置信度降序排列
+    k = std::min(k, size);
+    std::partial_sort(elements.begin(), elements.begin() + k, elements.end(),
+                      [](const std::pair<float, int>& a, const std::pair<float, int>& b)
+                      {
+                          return a.first > b.first;  // 只按confidence降序
+                      });
+
+    // 构建结果
+    ClassificationResults results;
+    results.reserve(k);
+
+    for (int i = 0; i < k; i++)
+    {
+        ClassificationResult result;
+        result.confidence = elements[i].first;                       // 置信度
+        result.class_id = static_cast<uint8_t>(elements[i].second);  // 类别ID
+        result.class_name = getClassName(elements[i].second);
+        results.push_back(result);
+    }
+
+    return results;
+}
+
+bool CustomModel::loadClassNames(const std::string& file_path)
+{
+    std::cout << "\n[LOAD] Loading class names from: " << file_path << std::endl;
+
+    std::ifstream file(file_path);
+    if (!file.is_open())
+    {
+        std::cerr << "Failed to open class names file: " << file_path << std::endl;
+        return false;
+    }
+
+    class_names_.clear();
+    std::string line;
+    int line_number = 0;
+
+    while (std::getline(file, line))
+    {
+        // 去除行尾的换行符和空格
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+        if (line.empty())
+        {
+            // 空行使用默认类名
+            class_names_.push_back("class_" + std::to_string(line_number));
+        }
+        else
+        {
+            class_names_.push_back(line);
+        }
+
+        line_number++;
+    }
+
+    file.close();
+
+    if (class_names_.empty())
+    {
+        std::cerr << "No class names loaded from file" << std::endl;
+        return false;
+    }
+
+    class_names_loaded_ = true;
+    std::cout << "[SUCCESS] Loaded " << class_names_.size() << " class names" << std::endl;
+
+    // 打印前几个类名作为验证
+    for (size_t i = 0; i < std::min(size_t(5), class_names_.size()); ++i)
+    {
+        std::cout << "        [" << i << "] " << class_names_[i] << std::endl;
+    }
+
+    return true;
+}
+
+std::string CustomModel::getClassName(int class_id) const
+{
+    if (class_names_loaded_ && class_id >= 0 && class_id < static_cast<int>(class_names_.size()))
+    {
+        return class_names_[class_id];
+    }
+    else
+    {
+        // 如果没有加载类名文件或ID超出范围，返回默认名称
+        return "class_" + std::to_string(class_id);
+    }
+}
+
+}  // namespace rknn_cpp

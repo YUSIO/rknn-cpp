@@ -186,7 +186,7 @@ InferenceResult BaseModelImpl::predict(const cv::Mat& image)
     std::cout << "[INFO] Postprocess time: " << postprocess_duration.count() << " ms" << std::endl;
     std::cout << "[INFO] Total inference time: "
               << (preprocess_duration + inference_duration + postprocess_duration).count() << " ms" << std::endl;
-
+    result.inference_time = (preprocess_duration + inference_duration + postprocess_duration).count();
     // 4. 释放输出资源
     rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
 
@@ -274,26 +274,10 @@ bool BaseModelImpl::loadRKNNModel(const std::string& model_path)
 bool BaseModelImpl::runRKNNInference(const cv::Mat& input_img)
 {
     // 确保图像格式正确 - RGB格式
-    cv::Mat rgb_img;
-    if (input_img.channels() == 3)
-    {
-        cv::cvtColor(input_img, rgb_img, cv::COLOR_BGR2RGB);
-    }
-    else if (input_img.channels() == 1)
-    {
-        cv::cvtColor(input_img, rgb_img, cv::COLOR_GRAY2RGB);
-    }
-    else if (input_img.channels() == 4)
-    {
-        cv::cvtColor(input_img, rgb_img, cv::COLOR_BGRA2RGB);
-    }
-    else
-    {
-        rgb_img = input_img;
-    }
+    cv::Mat rgb_img = input_img;
 
     // 验证图像尺寸
-    if (rgb_img.cols != model_width_ || rgb_img.rows != model_height_ || rgb_img.channels() != 3)
+    if (rgb_img.cols != model_width_ || rgb_img.rows != model_height_ || rgb_img.channels() != getModelChannels())
     {
         std::cerr << "Image dimension mismatch: expected " << model_width_ << "x" << model_height_ << "x3, got "
                   << rgb_img.cols << "x" << rgb_img.rows << "x" << rgb_img.channels() << std::endl;
@@ -420,6 +404,7 @@ InferenceResult BaseModelImpl::createDetectionResult(const DetectionResults& det
     InferenceResult result;
     result.task_type = ModelTask::OBJECT_DETECTION;
     result.result_data = detections;
+    result.is_success = true;
     return result;
 }
 
@@ -428,6 +413,7 @@ InferenceResult BaseModelImpl::createClassificationResult(const ClassificationRe
     InferenceResult result;
     result.task_type = ModelTask::CLASSIFICATION;
     result.result_data = classifications;
+    result.is_success = true;
     return result;
 }
 
@@ -448,6 +434,7 @@ InferenceResult BaseModelImpl::createEmptyResult() const
             result.result_data = DetectionResults{};
             break;
     }
+    result.is_success = false;
 
     return result;
 }

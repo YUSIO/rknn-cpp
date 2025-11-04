@@ -65,7 +65,8 @@ struct InferenceResult
 {
     ModelTask task_type;
     std::any result_data;  // 可以是DetectionResults或ClassificationResults
-
+    bool is_success;
+    float inference_time;
     // 便利方法
     DetectionResults getDetections() const
     {

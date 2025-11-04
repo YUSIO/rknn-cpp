@@ -43,6 +43,7 @@
 // 具体模型实现
 #include "rknn_cpp/models/resnet_model.h"
 #include "rknn_cpp/models/yolov3_model.h"
+#include "rknn_cpp/models/custom_model.h"
 
 /**
  * @namespace rknn_cpp
@@ -54,8 +55,8 @@ namespace rknn_cpp
 {
 
 /**
- * @brief 创建ResNet分类模型
- * @return ResNet模型的唯一指针
+ * @brief 创建模型
+ * @return 模型的唯一指针
  *
  * @example
  * ```cpp
@@ -71,6 +72,10 @@ inline std::unique_ptr<IModel> createResNetModel()
 inline std::unique_ptr<IModel> createYoloV3Model()
 {
     return std::make_unique<Yolov3Model>();
+}
+inline std::unique_ptr<IModel> createCustomModel()
+{
+    return std::make_unique<CustomModel>();
 }
 /**
  * @brief 根据任务类型创建模型

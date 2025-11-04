@@ -35,6 +35,7 @@ set(SOURCES
     src/base/base_model_impl.cpp
     src/models/resnet_model.cpp
     src/models/yolov3_model.cpp
+    src/models/custom_model.cpp
 )
 
 # 创建库

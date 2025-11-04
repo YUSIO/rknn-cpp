@@ -56,28 +56,38 @@ bool Yolov3Model::setupModel(const ModelConfig& config)
     {
         std::cout << "[INFO] Using default class names (no file provided)" << std::endl;
     }
-
+    auto conf_threshold = config.find("conf_threshold");
+    if (conf_threshold != config.end() && !conf_threshold->second.empty())
+    {
+        this->conf_threshold_ = stof(conf_threshold->second);
+    }
+    else
+    {
+        this->conf_threshold_ = 0.25f;
+    }
+    auto nms_threshold = config.find("nms_threshold");
+    if (nms_threshold != config.end() && !nms_threshold->second.empty())
+    {
+        this->nms_threshold_ = stof(nms_threshold->second);
+    }
+    else
+    {
+        this->nms_threshold_ = 0.1f;
+    }
     return true;
 }
 
 bool Yolov3Model::preprocessImage(const cv::Mat& src_img, cv::Mat& dst_img)
 {
     cv::Mat input_img{};
-    cv::Mat safe_img = src_img.clone();
-
-    std::cout << "[DEBUG] src_img.empty(): " << src_img.empty() << std::endl;
-    std::cout << "[DEBUG] src_img.channels(): " << src_img.channels() << std::endl;
-    std::cout << "[DEBUG] getModelChannels(): " << getModelChannels() << std::endl;
-    std::cout << "[DEBUG] src_img.type(): " << src_img.type() << std::endl;
-    std::cout << "[DEBUG] src_img.size(): " << src_img.size() << std::endl;
 
     if (src_img.channels() == 1 && getModelChannels() == 3)
     {
-        cv::cvtColor(safe_img, input_img, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(src_img, input_img, cv::COLOR_GRAY2RGB);
     }
     else
     {
-        input_img = safe_img;
+        input_img = src_img;
     }
     std::cout << "\n[PREPROCESS] YOLOv3 image preprocessing (cv::Mat)" << std::endl;
 
@@ -133,8 +143,6 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     std::vector<float> objProbs;
     std::vector<int> classId;
 
-    float conf_threshold = 0.25f;  // 可以作为配置参数
-    float nms_threshold = 0.1f;
     int total_valid_boxes = 0;
 
     // 处理每个输出层
@@ -161,14 +169,15 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
                       << std::endl;
             std::cout << "[MODE] Processing quantized model" << std::endl;
             // 处理量化模型
-            valid_count = processYoloLayer(outputs[i].buf, true, layer, boxes, objProbs, classId, conf_threshold,
+            valid_count = processYoloLayer(outputs[i].buf, true, layer, boxes, objProbs, classId, this->conf_threshold_,
                                            attr.zp, attr.scale);
         }
         else
         {
             // 处理浮点模型
             std::cout << "Process float model" << std::endl;
-            valid_count = processYoloLayer(outputs[i].buf, false, layer, boxes, objProbs, classId, conf_threshold);
+            valid_count =
+                processYoloLayer(outputs[i].buf, false, layer, boxes, objProbs, classId, this->conf_threshold_);
         }
 
         total_valid_boxes += valid_count;
@@ -178,7 +187,7 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     std::cout << "      Total detections: " << total_valid_boxes << std::endl;
 
     // 应用NMS
-    std::vector<int> keep_indices = applyNMS(boxes, objProbs, classId, nms_threshold);
+    std::vector<int> keep_indices = applyNMS(boxes, objProbs, classId, this->nms_threshold_);
 
     // 构建最终的检测结果
     DetectionResults detections;
@@ -204,6 +213,16 @@ InferenceResult Yolov3Model::postprocessOutputs(rknn_output* outputs, int output
     convertLetterboxToOriginal(detections, getOriginalWidth(), getOriginalHeight());
 
     std::cout << "[RESULT] Final detections after coordinate conversion: " << detections.size() << std::endl;
+
+    // 打印每个检测项的详细信息
+    std::cout << "\n[DETECTIONS] Detailed list:" << std::endl;
+    for (size_t i = 0; i < detections.size(); ++i)
+    {
+        const auto& d = detections[i];
+        std::cout << "  [" << i << "] " << d.class_name << " (id=" << d.class_id << ") "
+                  << "conf=" << std::fixed << std::setprecision(3) << d.confidence << " "
+                  << "bbox=(x=" << d.x << ", y=" << d.y << ", w=" << d.width << ", h=" << d.height << ")" << std::endl;
+    }
 
     // 使用基类的便利方法创建结果
     return createDetectionResult(detections);

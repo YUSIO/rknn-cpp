@@ -35,6 +35,8 @@ class Yolov3Model : public BaseModelImpl
     std::vector<std::string> class_names_;
     bool class_names_loaded_;
     LetterboxParams letterbox_params_;  // 保存letterbox预处理参数
+    double nms_threshold_;
+    double conf_threshold_;
     struct YoloLayer
     {
         int grid_h;
