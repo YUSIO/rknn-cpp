@@ -186,7 +186,9 @@ InferenceResult BaseModelImpl::predict(const cv::Mat& image)
     std::cout << "[INFO] Postprocess time: " << postprocess_duration.count() << " ms" << std::endl;
     std::cout << "[INFO] Total inference time: "
               << (preprocess_duration + inference_duration + postprocess_duration).count() << " ms" << std::endl;
-    result.inference_time = (preprocess_duration + inference_duration + postprocess_duration).count();
+    result.total_time = (preprocess_duration + inference_duration + postprocess_duration).count();
+    result.inference_time = (inference_duration).count();
+
     // 4. 释放输出资源
     rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
 

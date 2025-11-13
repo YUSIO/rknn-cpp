@@ -67,6 +67,7 @@ struct InferenceResult
     std::any result_data;  // 可以是DetectionResults或ClassificationResults
     bool is_success;
     float inference_time;
+    float total_time;
     // 便利方法
     DetectionResults getDetections() const
     {
