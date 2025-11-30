@@ -344,8 +344,10 @@ cd build
 
 class MyCustomModel : public BaseModelImpl {
 public:
+    MyCustomModel() : task_type_(ModelTask::CLASSIFICATION) {}
+    
     ModelTask getTaskType() const override {
-        return ModelTask::CLASSIFICATION;
+        return task_type_;
     }
     
     std::string getModelName() const override {
@@ -354,22 +356,47 @@ public:
 
 protected:
     bool setupModel(const ModelConfig& config) override {
-        // 加载模型和配置
-        return loadRKNNModel(config.at("model_path"));
+        // 安全获取配置项
+        auto it = config.find("model_path");
+        if (it == config.end()) {
+            std::cerr << "缺少必需的配置项: model_path" << std::endl;
+            return false;
+        }
+        
+        // 可选: 从配置中设置任务类型
+        auto task_it = config.find("task_type");
+        if (task_it != config.end() && task_it->second == "detection") {
+            task_type_ = ModelTask::OBJECT_DETECTION;
+        }
+        
+        // 加载模型
+        return loadRKNNModel(it->second);
     }
     
     bool preprocessImage(const cv::Mat& src, cv::Mat& dst) override {
-        // 自定义预处理
-        return standardPreprocess(src, dst);
+        // 根据任务类型选择不同的预处理方式
+        if (task_type_ == ModelTask::OBJECT_DETECTION) {
+            return letterboxPreprocess(src, dst);  // 目标检测使用 letterbox
+        }
+        return standardPreprocess(src, dst);  // 分类使用标准缩放
     }
     
     InferenceResult postprocessOutputs(rknn_output* outputs, 
                                        int output_count) override {
-        // 自定义后处理
-        ClassificationResults results;
-        // ... 解析输出 ...
-        return createClassificationResult(results);
+        // 根据任务类型返回不同的结果
+        if (task_type_ == ModelTask::OBJECT_DETECTION) {
+            DetectionResults detections;
+            // ... 解析检测输出 ...
+            return createDetectionResult(detections);
+        }
+        
+        ClassificationResults classifications;
+        // ... 解析分类输出 ...
+        return createClassificationResult(classifications);
     }
+
+private:
+    ModelTask task_type_;
 };
 ```
 
